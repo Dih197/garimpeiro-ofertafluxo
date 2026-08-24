@@ -8,6 +8,13 @@ import { categoryById, matchesCategory } from './categories.js';
 import { currentShopeeCampaign } from './campaigns.js';
 import { automationWindowOpen, confirmDelivery, failDelivery, queueDelivery, reserveDelivery } from './safety.js';
 
+function categoryForDestination(destination) {
+  const ids = Array.isArray(destination.categoryIds) && destination.categoryIds.length
+    ? destination.categoryIds
+    : [destination.categoryId || 'all'];
+  return categoryById(ids[Math.floor(Math.random() * ids.length)]);
+}
+
 export async function run(settings, destinationIds = null) {
   const seenDestinations = new Set();
   const activeDestinations = (settings.destinations || []).filter(destination => {
@@ -43,7 +50,9 @@ export async function run(settings, destinationIds = null) {
   };
   const campaign = currentShopeeCampaign();
   const jobs = destinations.map(async destination => {
-    const category = categoryById(destination.categoryId);
+    // Cada rodada escolhe uma categoria autorizada ao acaso. Assim um mesmo
+    // grupo pode receber uma rotação real de nichos, sem repetir um padrão fixo.
+    const category = categoryForDestination(destination);
     const selected = selectOffers(
       await offersForCategory(category),
       { ...settings.filters, maxOffers: 1 },

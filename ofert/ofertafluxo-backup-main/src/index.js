@@ -173,6 +173,17 @@ function refreshAutomationSchedule(saved, now = Date.now()) {
     destinationSchedule: refreshDestinationSchedule(saved.automation, saved.destinations, now)
   };
 }
+function categoriesForDestination(input) {
+  const values = Array.isArray(input?.categoryIds) ? input.categoryIds : [input?.categoryId];
+  const valid = [...new Set(values.map(value => categoryById(String(value || '')).id))];
+  return valid.length ? valid : ['all'];
+}
+function categoryForDestination(destination) {
+  const ids = Array.isArray(destination.categoryIds) && destination.categoryIds.length
+    ? destination.categoryIds
+    : [destination.categoryId || 'all'];
+  return categoryById(ids[Math.floor(Math.random() * ids.length)]);
+}
 function cookieValue(request, name) { return String(request.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(`${name}=`))?.slice(name.length + 1); }
 function authenticatedUser(request) { return userFromSession(cookieValue(request, 'of_session')); }
 function sessionCookie(token) { return `of_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 60 * 60}${externallyHosted ? '; Secure' : ''}`; }
@@ -257,7 +268,8 @@ http.createServer(async (request, response) => {
       const input = await readBody(request); const destination = newDestination(input);
       if (!destination.name || destination.number.length < 10) throw new Error('Informe um nome e um número válido com DDI.');
       if (!destination.consent) throw new Error('Confirme que o grupo ou contato autorizou o recebimento das ofertas.');
-      destination.categoryId = categoryById(destination.categoryId).id;
+      destination.categoryIds = categoriesForDestination(input);
+      destination.categoryId = destination.categoryIds[0];
       const saved = loadSettings(base, user.id);
       if (saved.destinations.some(item => item.number === destination.number)) throw new Error('Este destino já está cadastrado. Altere a categoria no cadastro existente em vez de adicioná-lo novamente.');
       saved.destinations.push(destination); refreshAutomationSchedule(saved); saveSettings(user.id, saved); saveLog(user, 'info', `Destino adicionado: ${destination.name}`);
@@ -266,8 +278,10 @@ http.createServer(async (request, response) => {
     if (request.method === 'PATCH' && url.pathname.startsWith('/api/destinations/')) {
       const id = url.pathname.split('/').at(-1); const input = await readBody(request); const saved = loadSettings(base, user.id); const item = saved.destinations.find(d => d.id === id);
       if (!item) return json(response, 404, { error: 'Destino não encontrado' });
-      if (input.categoryId) item.categoryId = categoryById(input.categoryId).id;
-      else item.active = !item.active;
+      if (Array.isArray(input.categoryIds) || input.categoryId) {
+        item.categoryIds = categoriesForDestination(input);
+        item.categoryId = item.categoryIds[0];
+      } else item.active = !item.active;
       refreshAutomationSchedule(saved); saveSettings(user.id, saved); return json(response, 200, item);
     }
     if (request.method === 'DELETE' && url.pathname.startsWith('/api/destinations/')) {
@@ -301,7 +315,7 @@ http.createServer(async (request, response) => {
       const settings = appSettings(user);
       const destination = settings.destinations.find(item => item.active && item.consent);
       if (!destination) throw new Error('Adicione um grupo autoral ativo e confirme o consentimento para usar o simulador.');
-      const category = categoryById(destination.categoryId);
+      const category = categoryForDestination(destination);
       const raw = normalizeOffers(await getShopeeOffers(settings.shopee)).filter(offer => matchesCategory(offer, category));
       const offer = selectOffers(raw, { ...settings.filters, maxOffers: 1 }, new Set())[0];
       if (!offer) throw new Error('Nenhuma oferta disponível para os filtros atuais. Ajuste os filtros da Shopee e tente novamente.');

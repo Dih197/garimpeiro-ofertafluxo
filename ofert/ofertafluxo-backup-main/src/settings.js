@@ -26,6 +26,11 @@ function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value, null, 2));
 }
+function destinationCategoryIds(destination = {}) {
+  const supplied = Array.isArray(destination.categoryIds) ? destination.categoryIds : [destination.categoryId];
+  const ids = [...new Set(supplied.map(value => String(value || '').trim()).filter(Boolean))];
+  return ids.length ? ids : ['all'];
+}
 export function loadSettings(base, userId) {
   const saved = readJson(settingsPath(userId), {});
   return {
@@ -40,7 +45,12 @@ export function loadSettings(base, userId) {
     evolution: { ...defaultSettings.evolution, ...base.evolution, ...saved.evolution },
     directWhatsApp: { ...defaultSettings.directWhatsApp, ...saved.directWhatsApp },
     whatsapp: { ...defaultSettings.whatsapp, ...base.whatsapp, ...saved.whatsapp },
-    destinations: Array.isArray(saved.destinations) ? saved.destinations.map(destination => ({ ...destination, consent: destination.consent !== false })) : []
+    // categoryIds substitui categoryId sem quebrar destinos criados antes da
+    // rotação. categoryId continua como compatibilidade para integrações antigas.
+    destinations: Array.isArray(saved.destinations) ? saved.destinations.map(destination => {
+      const categoryIds = destinationCategoryIds(destination);
+      return { ...destination, categoryIds, categoryId: categoryIds[0], consent: destination.consent !== false };
+    }) : []
   };
 }
 export function saveSettings(userId, value) { writeJson(settingsPath(userId), value); }
@@ -56,10 +66,11 @@ export function publicSettings(value) {
     whatsapp: { configured: Boolean(value.whatsapp.token && value.whatsapp.phoneNumberId), mode: value.whatsapp.mode }
   };
 }
-export function newDestination({ name, number, type = 'contact', categoryId = 'all', consent = false }) {
+export function newDestination({ name, number, type = 'contact', categoryId = 'all', categoryIds, consent = false }) {
   const input = String(number || '').trim();
   const target = type === 'group' ? input : input.replace(/\D/g, '');
-  return { id: crypto.randomUUID(), name: String(name || '').trim(), number: target, type, categoryId: String(categoryId || 'all'), consent: Boolean(consent), consentAt: consent ? new Date().toISOString() : null, active: true, createdAt: new Date().toISOString() };
+  const selectedCategories = destinationCategoryIds({ categoryId, categoryIds });
+  return { id: crypto.randomUUID(), name: String(name || '').trim(), number: target, type, categoryId: selectedCategories[0], categoryIds: selectedCategories, consent: Boolean(consent), consentAt: consent ? new Date().toISOString() : null, active: true, createdAt: new Date().toISOString() };
 }
 export function activity(userId, limit = 30) { return readJson(activityPath(userId), []).slice(0, limit); }
 export function addActivity(userId, entry) {

@@ -78,7 +78,9 @@ function renderOverviewHub() {
 function renderDestinations() {
   const list = $('#destinations-list'); const destinations = state.destinations || []; const hub = ensureDestinationsHub();
   const categoryName = id => (state.categories || []).find(category => category.id === id)?.label || 'Ofertas gerais';
-  const categoryOptions = selected => (state.categories || []).map(category => `<option value="${escapeHtml(category.id)}" ${category.id === (selected || 'all') ? 'selected' : ''}>${escapeHtml(category.label)}</option>`).join('');
+  const categoryIds = item => selectedCategoryIds(item);
+  const categoryNames = item => categoryIds(item).map(categoryName).join(' + ');
+  const categoryChips = item => (state.categories || []).map(category => `<label class="category-chip${categoryIds(item).includes(category.id) ? ' active' : ''}"><input type="checkbox" value="${escapeHtml(category.id)}" ${categoryIds(item).includes(category.id) ? 'checked' : ''}><span>${escapeHtml(category.label)}</span></label>`).join('');
   const schedule = new Map((state.automationStatus?.destinations || []).map(item => [item.destinationId, item.nextRunAt]));
   const countdown = date => {
     const seconds = Math.max(0, Math.ceil((new Date(date).getTime() - Date.now()) / 1000));
@@ -100,9 +102,10 @@ function renderDestinations() {
     $('#destinations-hub-copy').textContent = groups.length ? `${groups.length} grupo(s) autoral(is) sincronizado(s). Autorize somente os que devem receber ofertas.` : 'Conecte e sincronize o WhatsApp para encontrar seus grupos autorais.';
   }
   list.classList.toggle('empty', !visibleDestinations.length);
-  list.innerHTML = `<div class="destination-filters"><button class="destination-filter${destinationView === 'all' ? ' active' : ''}" data-destination-view="all">Todos <b>${destinations.length}</b></button><button class="destination-filter${destinationView === 'active' ? ' active' : ''}" data-destination-view="active">Ativos <b>${destinations.filter(item => item.active).length}</b></button><button class="destination-filter${destinationView === 'paused' ? ' active' : ''}" data-destination-view="paused">Pausados <b>${destinations.filter(item => !item.active).length}</b></button></div>${visibleDestinations.length ? visibleDestinations.map(item => `<article class="destination"><div class="avatar">${item.type === 'group' ? '♧' : '◔'}</div><div><strong>${escapeHtml(item.name)}</strong><small>${item.type === 'group' ? escapeHtml(item.number) : `+${escapeHtml(item.number)}`} · ${escapeHtml(categoryName(item.categoryId))}${automationNote(item)}</small></div><select class="destination-category" title="Categoria deste destino" data-id="${item.id}">${categoryOptions(item.categoryId)}</select><span class="tag ${item.active ? '' : 'off'}">${item.active ? 'Ativo' : 'Pausado'}</span><button class="icon-button toggle-destination" title="Ativar ou pausar" data-id="${item.id}">⏻</button><button class="icon-button delete-destination" title="Remover" data-id="${item.id}">⌫</button></article>`).join('') : '<div class="destination-empty">Nenhum destino nesta visualização. Sincronize um grupo autoral ou adicione um destino autorizado.</div>'}`;
+  list.innerHTML = `<div class="destination-filters"><button class="destination-filter${destinationView === 'all' ? ' active' : ''}" data-destination-view="all">Todos <b>${destinations.length}</b></button><button class="destination-filter${destinationView === 'active' ? ' active' : ''}" data-destination-view="active">Ativos <b>${destinations.filter(item => item.active).length}</b></button><button class="destination-filter${destinationView === 'paused' ? ' active' : ''}" data-destination-view="paused">Pausados <b>${destinations.filter(item => !item.active).length}</b></button></div>${visibleDestinations.length ? visibleDestinations.map(item => `<article class="destination"><div class="avatar">${item.type === 'group' ? '♧' : '◔'}</div><div class="destination-main"><strong>${escapeHtml(item.name)}</strong><small>${item.type === 'group' ? escapeHtml(item.number) : `+${escapeHtml(item.number)}`} · Rotação: ${escapeHtml(categoryNames(item))}${automationNote(item)}</small></div><div class="destination-category-summary"><span>${categoryIds(item).length} categoria${categoryIds(item).length === 1 ? '' : 's'}</span><button class="secondary edit-destination-categories" data-id="${item.id}">Editar categorias</button></div><span class="tag ${item.active ? '' : 'off'}">${item.active ? 'Ativo' : 'Pausado'}</span><button class="icon-button toggle-destination" title="Ativar ou pausar" data-id="${item.id}">⏻</button><button class="icon-button delete-destination" title="Remover" data-id="${item.id}">⌫</button></article>`).join('') : '<div class="destination-empty">Nenhum destino nesta visualização. Sincronize um grupo autoral ou adicione um destino autorizado.</div>'}`;
   $('#groups-helper').innerHTML = groups.length ? `<div class="groups-heading"><div><h3>Grupos autorais disponíveis</h3><p>Somente grupos administrados por este WhatsApp. Escolha um para definir categoria e consentimento.</p></div><span class="tag">${groups.length} disponível(is)</span></div>${groups.map(group => `<article class="group-picker"><div class="avatar">♧</div><div><strong>${escapeHtml(group.subject)}</strong><small>${escapeHtml(group.id)}</small></div><button class="secondary select-group" data-id="${escapeHtml(group.id)}" data-name="${escapeHtml(group.subject)}">Autorizar grupo</button></article>`).join('')}` : '<div class="groups-empty">Nenhum grupo autoral sincronizado. Confirme se este WhatsApp é administrador do grupo e clique em “Sincronizar grupos”.</div>';
 }
+function selectedCategoryIds(item = {}) { return Array.isArray(item.categoryIds) && item.categoryIds.length ? item.categoryIds : [item.categoryId || 'all']; }
 function escapeHtml(value) { return String(value || '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]); }
 function renderIntegrationValidation() {
   const element = $('#integration-validation');
@@ -173,7 +176,7 @@ function renderAutomationHub() {
   count.textContent = `${schedule.length} na fila`; count.classList.toggle('off', !schedule.length);
   queue.classList.toggle('empty', !schedule.length);
   queue.innerHTML = schedule.length ? schedule.sort((left, right) => String(left.nextRunAt).localeCompare(String(right.nextRunAt))).map(item => {
-    const destination = map.get(item.destinationId); return `<div class="automation-queue-item"><div class="avatar">♧</div><div><b>${escapeHtml(destination?.name || 'Grupo autorizado')}</b><small>${escapeHtml((state.categories || []).find(category => category.id === destination?.categoryId)?.label || 'Ofertas gerais')}</small></div><span class="automation-queue-time">${automationTime(item.nextRunAt)}</span></div>`;
+    const destination = map.get(item.destinationId); const labels = (Array.isArray(destination?.categoryIds) && destination.categoryIds.length ? destination.categoryIds : [destination?.categoryId || 'all']).map(id => (state.categories || []).find(category => category.id === id)?.label || 'Ofertas gerais'); return `<div class="automation-queue-item"><div class="avatar">♧</div><div><b>${escapeHtml(destination?.name || 'Grupo autorizado')}</b><small>Rotação aleatória: ${escapeHtml(labels.join(' + '))}</small></div><span class="automation-queue-time">${automationTime(item.nextRunAt)}</span></div>`;
   }).join('') : 'Adicione grupos autorais com consentimento para montar a fila.';
 }
 function renderState() {
@@ -190,7 +193,8 @@ function renderState() {
   const categoryField = $('#preview-category'); const previousCategory = categoryField.value;
   categoryField.innerHTML = (state.categories || []).map(category => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.label)}</option>`).join('');
   const activeDestinations = (state.destinations || []).filter(destination => destination.active);
-  categoryField.value = (state.categories || []).some(category => category.id === previousCategory) ? previousCategory : (activeDestinations.length === 1 ? activeDestinations[0].categoryId : 'all');
+  const preferredCategories = activeDestinations.length === 1 ? (activeDestinations[0].categoryIds || [activeDestinations[0].categoryId]) : ['all'];
+  categoryField.value = (state.categories || []).some(category => category.id === previousCategory) ? previousCategory : (preferredCategories[0] || 'all');
   const automation = state.automationStatus || state.automation || {};
   $('#automation-enabled').checked = Boolean(automation.enabled);
   $('#automation-interval').value = String(automation.intervalMinutes || 60);
@@ -297,6 +301,15 @@ document.addEventListener('click', async event => {
   } catch (error) { toast(error.message, true); } finally { const button = $('#refresh-destinations-groups'); if (button) { button.disabled = false; button.textContent = '↻ Sincronizar grupos'; } } return; }
   const destinationFilter = event.target.closest('[data-destination-view]');
   if (destinationFilter) { destinationView = destinationFilter.dataset.destinationView; renderDestinations(); return; }
+  const saveCategories = event.target.closest('.save-destination-categories');
+  if (saveCategories) { try {
+    const editor = saveCategories.closest('.destination-category-editor');
+    const categoryIds = Array.from(editor.querySelectorAll('input:checked')).map(input => input.value);
+    if (!categoryIds.length) throw new Error('Escolha ao menos uma categoria para manter a rotação ativa.');
+    saveCategories.disabled = true; saveCategories.textContent = 'Salvando…';
+    await api(`/api/destinations/${saveCategories.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ categoryIds }) });
+    await reload(); toast(`${categoryIds.length} categoria(s) salvas. A próxima oferta será sorteada entre elas.`);
+  } catch (error) { toast(error.message, true); } return; }
   if (event.target.closest('#validate-integrations')) { const summary = $('#integration-validation'); summary.textContent = 'Validando Shopee e WhatsApp…'; try {
     const response = await api('/api/offers/preview', { method: 'POST', body: JSON.stringify({ categoryId: 'all' }) });
     integrationsCheckedAt = new Date(); await reload();
@@ -304,6 +317,16 @@ document.addEventListener('click', async event => {
     toast('Integrações validadas.');
   } catch (error) { await reload(); summary.textContent = `A validação da Shopee precisa de atenção: ${error.message}`; toast(error.message, true); } return; }
   if (event.target.closest('#new-destination')) return $('#destination-dialog').showModal();
+  const editCategories = event.target.closest('.edit-destination-categories');
+  if (editCategories) {
+    const destination = (state.destinations || []).find(item => item.id === editCategories.dataset.id);
+    if (!destination) return;
+    const selected = selectedCategoryIds(destination);
+    $('#category-edit-options').innerHTML = (state.categories || []).map(category => `<label class="category-chip${selected.includes(category.id) ? ' active' : ''}"><input type="checkbox" value="${escapeHtml(category.id)}" ${selected.includes(category.id) ? 'checked' : ''}><span>${escapeHtml(category.label)}</span></label>`).join('');
+    $('#category-dialog').dataset.destinationId = destination.id;
+    $('#category-dialog').showModal();
+    return;
+  }
   const group = event.target.closest('.select-group');
   if (group) { $('#destination-type').value = 'group'; $('#destination-name').value = group.dataset.name; $('#destination-number').value = group.dataset.id; $('#destination-number-label').firstChild.textContent = 'ID do grupo (…@g.us)'; $('#destination-dialog').showModal(); return; }
   if (event.target.closest('.close')) return event.target.closest('dialog').close();
@@ -312,14 +335,10 @@ document.addEventListener('click', async event => {
   const remove = event.target.closest('.delete-destination');
   if (remove && confirm('Remover este destino?')) { try { await api(`/api/destinations/${remove.dataset.id}`, { method: 'DELETE' }); await reload(); } catch (error) { toast(error.message, true); } }
 });
-document.addEventListener('change', async event => {
+document.addEventListener('change', event => {
   if (['offer-sort', 'offer-discount', 'offer-price-max'].includes(event.target.id)) { renderOfferCatalog(); return; }
-  const category = event.target.closest('.destination-category');
-  if (!category) return;
-  try {
-    await api(`/api/destinations/${category.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ categoryId: category.value }) });
-    await reload(); toast('Categoria atualizada.');
-  } catch (error) { toast(error.message, true); }
+  const input = event.target.closest('.category-chip input');
+  if (input) input.closest('.category-chip').classList.toggle('active', input.checked);
 });
 document.addEventListener('input', event => {
   if (event.target.id === 'offer-search-input' || event.target.id === 'offer-price-max') renderOfferCatalog();
@@ -346,8 +365,16 @@ $('#start-direct').addEventListener('click', async () => { try {
   setTimeout(updateDirectStatus, 900);
 } catch (error) { toast(error.message, true); } });
 $('#save-destination').addEventListener('click', async () => { try {
-  await api('/api/destinations', { method: 'POST', body: JSON.stringify({ name: $('#destination-name').value, number: $('#destination-number').value, type: $('#destination-type').value, categoryId: $('#destination-category').value, consent: $('#destination-consent').checked }) });
-  $('#destination-dialog').close(); $('#destination-name').value = ''; $('#destination-number').value = ''; $('#destination-category').value = 'all'; $('#destination-consent').checked = false; await reload(); toast('Destino adicionado.');
+  const categoryIds = Array.from($('#destination-category').querySelectorAll('input:checked')).map(input => input.value);
+  if (!categoryIds.length) throw new Error('Escolha ao menos uma categoria para este destino.');
+  await api('/api/destinations', { method: 'POST', body: JSON.stringify({ name: $('#destination-name').value, number: $('#destination-number').value, type: $('#destination-type').value, categoryIds, consent: $('#destination-consent').checked }) });
+  $('#destination-dialog').close(); $('#destination-name').value = ''; $('#destination-number').value = ''; $('#destination-category').querySelectorAll('input').forEach(input => { input.checked = input.value === 'all'; input.closest('.category-chip').classList.toggle('active', input.checked); }); $('#destination-consent').checked = false; await reload(); toast(`Destino adicionado com ${categoryIds.length} categoria(s) em rotação.`);
+} catch (error) { toast(error.message, true); } });
+$('#save-category-rotation').addEventListener('click', async () => { try {
+  const dialog = $('#category-dialog'); const categoryIds = Array.from($('#category-edit-options').querySelectorAll('input:checked')).map(input => input.value);
+  if (!categoryIds.length) throw new Error('Escolha pelo menos uma categoria.');
+  await api(`/api/destinations/${dialog.dataset.destinationId}`, { method: 'PATCH', body: JSON.stringify({ categoryIds }) });
+  dialog.close(); await reload(); toast(`Rotação atualizada com ${categoryIds.length} categoria(s).`);
 } catch (error) { toast(error.message, true); } });
 $('#destination-type').addEventListener('change', () => {
   const group = $('#destination-type').value === 'group';
