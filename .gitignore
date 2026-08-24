@@ -1,0 +1,25 @@
+# Ambiente local e ferramentas de desenvolvimento
+.claude/
+.codex/
+ofertafluxo-backup/
+ofert/tools/
+ofert/*.zip
+
+# Dependências e artefatos (as regras dos projetos também cobrem estes casos)
+**/node_modules/
+**/.next/
+**/out/
+**/*.log
+**/*.tsbuildinfo
+
+# Credenciais, sessões e dados operacionais locais
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+**/data/
+
+# Sistema operacional e editores
+.DS_Store
+Thumbs.db
+.vscode/
