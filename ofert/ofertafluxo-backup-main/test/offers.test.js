@@ -4,6 +4,7 @@ import { formatOffer, normalizeOffers, selectOffers } from '../src/offers.js';
 import { categoryById, matchesCategory } from '../src/categories.js';
 import { automationWindowOpen, normalizeSafety } from '../src/safety.js';
 import { createDestinationSchedule, nextDueDestination, scheduleAfterRun } from '../src/automation-schedule.js';
+import { generateTrackedOfferLink } from '../src/shopee.js';
 
 test('normaliza e seleciona apenas uma oferta nova que atende aos filtros', () => {
   const offers = normalizeOffers({ productOfferV2: { nodes: [
@@ -99,4 +100,19 @@ test('intercala a automação entre grupos, sem envio simultâneo', () => {
   assert.equal(nextDueDestination(groups, schedule, start + 20 * 60_000).id, 'a');
   const advanced = scheduleAfterRun(schedule, 'a', groups, 60, start + 20 * 60_000);
   assert.equal(Date.parse(advanced.a.nextRunAt) - (start + 20 * 60_000), 60 * 60_000);
+});
+
+test('gera link Shopee com os cinco Sub IDs de atribuição', async () => {
+  let request;
+  const link = await generateTrackedOfferLink(
+    { url: 'https://affiliate.example/graphql', appId: '123', secret: 'segredo' },
+    'https://shopee.com.br/product/1/2',
+    ['WPP', 'GRPABC123', 'PRDABC123', 'ENVABC123', 'CATABC123'],
+    async (_url, options) => {
+      request = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ data: { generateShortLink: { shortLink: 'https://s.shopee.com.br/abc' } } }) };
+    }
+  );
+  assert.equal(link, 'https://s.shopee.com.br/abc');
+  assert.match(request.query, /subIds: \["WPP", "GRPABC123", "PRDABC123", "ENVABC123", "CATABC123"\]/);
 });

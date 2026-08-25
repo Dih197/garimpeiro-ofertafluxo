@@ -1,4 +1,4 @@
-import { getShopeeOffers } from './shopee.js';
+import { generateTrackedOfferLink, getShopeeOffers } from './shopee.js';
 import { formatOffer, normalizeOffers, selectOffers } from './offers.js';
 import { readSentIds, rememberSent } from './store.js';
 import { sendWhatsAppOffer } from './whatsapp.js';
@@ -7,6 +7,7 @@ import { sendDirectWhatsAppOffer } from './whatsapp-direct.js';
 import { categoryById, matchesCategory } from './categories.js';
 import { currentShopeeCampaign } from './campaigns.js';
 import { automationWindowOpen, confirmDelivery, failDelivery, queueDelivery, reserveDelivery } from './safety.js';
+import { beginOfferTracking, confirmOfferTracking, failOfferTracking, saveTrackedLink } from './tracking.js';
 
 function categoryForDestination(destination) {
   const ids = Array.isArray(destination.categoryIds) && destination.categoryIds.length
@@ -60,20 +61,29 @@ export async function run(settings, destinationIds = null) {
     );
     const offer = selected[0];
     if (!offer) return null;
-    const text = formatOffer(offer, campaign);
-    const reservation = reserveDelivery(settings.userId, destination, settings.safety);
+    const tracking = beginOfferTracking(settings.userId, { destination, offer, category, campaign });
+    let reservation;
     try {
+      // Não enviamos link comum como fallback: um envio sem os Sub IDs quebraria
+      // a atribuição por grupo e produto que o relatório precisa exibir.
+      const trackedLink = await generateTrackedOfferLink(settings.shopee, offer.url, tracking.subIds);
+      saveTrackedLink(settings.userId, tracking.id, trackedLink);
+      const trackedOffer = { ...offer, url: trackedLink };
+      const text = formatOffer(trackedOffer, campaign);
+      reservation = reserveDelivery(settings.userId, destination, settings.safety);
       await queueDelivery(async () => {
-        if (settings.directWhatsApp?.enabled) return sendDirectWhatsAppOffer(settings.userId, offer, text, [destination.number]);
+        if (settings.directWhatsApp?.enabled) return sendDirectWhatsAppOffer(settings.userId, trackedOffer, text, [destination.number]);
         if (settings.evolution?.enabled) return sendEvolutionOffer(text, { ...settings.evolution, targets: [destination.number] });
         return sendWhatsAppOffer(text, { ...settings.whatsapp, recipients: [destination.number] });
       }, settings.safety);
-      confirmDelivery(settings.userId, reservation, offer);
+      confirmDelivery(settings.userId, reservation, trackedOffer);
+      confirmOfferTracking(settings.userId, tracking.id);
+      return { offer: trackedOffer, destinationId: destination.id, destinationName: destination.name, categoryId: category.id, category: category.label, tracking };
     } catch (error) {
-      failDelivery(settings.userId, reservation, error);
+      if (reservation) failDelivery(settings.userId, reservation, error);
+      failOfferTracking(settings.userId, tracking.id, error);
       throw error;
     }
-    return { offer, destinationId: destination.id, destinationName: destination.name, categoryId: category.id, category: category.label };
   });
   const settled = await Promise.allSettled(jobs);
   const sent = settled.filter(result => result.status === 'fulfilled' && result.value).map(result => result.value);

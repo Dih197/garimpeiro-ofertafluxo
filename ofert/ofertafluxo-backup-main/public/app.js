@@ -25,7 +25,7 @@ function money(value) { return new Intl.NumberFormat('pt-BR', { style: 'currency
 function page(id) {
   document.querySelectorAll('.page').forEach(item => item.classList.toggle('active', item.id === id));
   document.querySelectorAll('.nav').forEach(item => item.classList.toggle('active', item.dataset.page === id));
-  $('#page-title').textContent = ({ dashboard: 'Visão geral', offers: 'Ofertas', automation: 'Automação', destinations: 'Destinos', integration: 'Integrações' })[id];
+  $('#page-title').textContent = ({ dashboard: 'Visão geral', offers: 'Ofertas', automation: 'Automação', destinations: 'Destinos', tracking: 'Rastreamento', integration: 'Integrações' })[id];
 }
 function renderActivity(items) {
   $('#activity').classList.toggle('empty', !items.length);
@@ -102,11 +102,18 @@ function renderDestinations() {
     $('#destinations-hub-copy').textContent = groups.length ? `${groups.length} grupo(s) autoral(is) sincronizado(s). Autorize somente os que devem receber ofertas.` : 'Conecte e sincronize o WhatsApp para encontrar seus grupos autorais.';
   }
   list.classList.toggle('empty', !visibleDestinations.length);
-  list.innerHTML = `<div class="destination-filters"><button class="destination-filter${destinationView === 'all' ? ' active' : ''}" data-destination-view="all">Todos <b>${destinations.length}</b></button><button class="destination-filter${destinationView === 'active' ? ' active' : ''}" data-destination-view="active">Ativos <b>${destinations.filter(item => item.active).length}</b></button><button class="destination-filter${destinationView === 'paused' ? ' active' : ''}" data-destination-view="paused">Pausados <b>${destinations.filter(item => !item.active).length}</b></button></div>${visibleDestinations.length ? visibleDestinations.map(item => `<article class="destination"><div class="avatar">${item.type === 'group' ? '♧' : '◔'}</div><div class="destination-main"><strong>${escapeHtml(item.name)}</strong><small>${item.type === 'group' ? escapeHtml(item.number) : `+${escapeHtml(item.number)}`} · Rotação: ${escapeHtml(categoryNames(item))}${automationNote(item)}</small></div><div class="destination-category-summary"><span>${categoryIds(item).length} categoria${categoryIds(item).length === 1 ? '' : 's'}</span><button class="secondary edit-destination-categories" data-id="${item.id}">Editar categorias</button></div><span class="tag ${item.active ? '' : 'off'}">${item.active ? 'Ativo' : 'Pausado'}</span><button class="icon-button toggle-destination" title="Ativar ou pausar" data-id="${item.id}">⏻</button><button class="icon-button delete-destination" title="Remover" data-id="${item.id}">⌫</button></article>`).join('') : '<div class="destination-empty">Nenhum destino nesta visualização. Sincronize um grupo autoral ou adicione um destino autorizado.</div>'}`;
+  list.innerHTML = `<div class="destination-filters"><button class="destination-filter${destinationView === 'all' ? ' active' : ''}" data-destination-view="all">Todos <b>${destinations.length}</b></button><button class="destination-filter${destinationView === 'active' ? ' active' : ''}" data-destination-view="active">Ativos <b>${destinations.filter(item => item.active).length}</b></button><button class="destination-filter${destinationView === 'paused' ? ' active' : ''}" data-destination-view="paused">Pausados <b>${destinations.filter(item => !item.active).length}</b></button></div>${visibleDestinations.length ? visibleDestinations.map(item => `<article class="destination"><div class="avatar">${item.type === 'group' ? '♧' : '◔'}</div><div class="destination-main"><strong>${escapeHtml(item.name)}</strong><small>${item.type === 'group' ? escapeHtml(item.number) : `+${escapeHtml(item.number)}`} · Rotação: ${escapeHtml(categoryNames(item))}${automationNote(item)}</small></div><div class="destination-category-summary"><span>${categoryIds(item).length} categoria${categoryIds(item).length === 1 ? '' : 's'}</span><button class="secondary edit-destination-name" data-id="${item.id}">Nome do grupo</button><button class="secondary edit-destination-categories" data-id="${item.id}">Categorias</button></div><span class="tag ${item.active ? '' : 'off'}">${item.active ? 'Ativo' : 'Pausado'}</span><button class="icon-button toggle-destination" title="Ativar ou pausar" data-id="${item.id}">⏻</button><button class="icon-button delete-destination" title="Remover" data-id="${item.id}">⌫</button></article>`).join('') : '<div class="destination-empty">Nenhum destino nesta visualização. Sincronize um grupo autoral ou adicione um destino autorizado.</div>'}`;
   $('#groups-helper').innerHTML = groups.length ? `<div class="groups-heading"><div><h3>Grupos autorais disponíveis</h3><p>Somente grupos administrados por este WhatsApp. Escolha um para definir categoria e consentimento.</p></div><span class="tag">${groups.length} disponível(is)</span></div>${groups.map(group => `<article class="group-picker"><div class="avatar">♧</div><div><strong>${escapeHtml(group.subject)}</strong><small>${escapeHtml(group.id)}</small></div><button class="secondary select-group" data-id="${escapeHtml(group.id)}" data-name="${escapeHtml(group.subject)}">Autorizar grupo</button></article>`).join('')}` : '<div class="groups-empty">Nenhum grupo autoral sincronizado. Confirme se este WhatsApp é administrador do grupo e clique em “Sincronizar grupos”.</div>';
 }
 function selectedCategoryIds(item = {}) { return Array.isArray(item.categoryIds) && item.categoryIds.length ? item.categoryIds : [item.categoryId || 'all']; }
 function escapeHtml(value) { return String(value || '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]); }
+function renderTracking() {
+  const tracking = state.tracking || {}; const records = tracking.records || [];
+  const summary = $('#tracking-summary'); const body = $('#tracking-table-body');
+  if (!summary || !body) return;
+  summary.innerHTML = `<article><small>LINKS ENVIADOS</small><strong>${Number(tracking.sent || 0)}</strong><span>com Sub IDs Shopee</span></article><article><small>GRUPOS IDENTIFICADOS</small><strong>${Number(tracking.groups || 0)}</strong><span>origem nomeada</span></article><article><small>PRODUTOS RASTREADOS</small><strong>${Number(tracking.products || 0)}</strong><span>por oferta enviada</span></article>`;
+  body.innerHTML = records.length ? records.map(item => `<tr><td>${new Date(item.sentAt || item.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td><strong>${escapeHtml(item.destinationName)}</strong><small>${escapeHtml(item.subIds?.[1] || '—')}</small></td><td><strong>${escapeHtml(item.productName)}</strong><small>${escapeHtml(item.subIds?.[2] || '—')}</small></td><td>${escapeHtml(item.categoryName || 'Ofertas gerais')}</td><td><code>${(item.subIds || []).map(escapeHtml).join(' · ')}</code></td><td><span class="tag ${item.status === 'enviado' ? '' : 'off'}">${escapeHtml(item.status)}</span></td></tr>`).join('') : '<tr><td colspan="6">Nenhum link rastreável enviado ainda. Ao ativar a automação, cada mensagem será registrada aqui automaticamente.</td></tr>';
+}
 function renderIntegrationValidation() {
   const element = $('#integration-validation');
   if (!element) return;
@@ -212,7 +219,7 @@ function renderState() {
   $('#safety-quiet-start').value = safety.quietStartHour ?? 22;
   $('#safety-quiet-end').value = safety.quietEndHour ?? 8;
   $('#safety-copy').textContent = `${safety.sentLastHour || 0}/${safety.maxPerHour || 12} envios na última hora · ${safety.sentToday || 0}/${safety.maxPerDay || 48} hoje${safety.automationWindowOpen === false ? ' · descanso ativo' : ''}.`;
-  renderDestinations(); renderActivity(state.activity || []); renderIntegrationValidation(); renderAutomationHub(); renderOverviewHub();
+  renderDestinations(); renderTracking(); renderActivity(state.activity || []); renderIntegrationValidation(); renderAutomationHub(); renderOverviewHub();
 }
 async function reload() {
   if (stateRefreshInProgress) return;
@@ -279,6 +286,7 @@ document.addEventListener('click', async event => {
   if (event.target.closest('#open-whatsapp')) return $('#whatsapp-dialog').showModal();
   if (event.target.closest('#open-evolution')) return $('#evolution-dialog').showModal();
   if (event.target.closest('#automation-refresh')) { try { await reload(); toast('Painel de automação atualizado.'); } catch (error) { toast(error.message, true); } return; }
+  if (event.target.closest('#refresh-tracking')) { try { await reload(); toast('Relatório de rastreamento atualizado.'); } catch (error) { toast(error.message, true); } return; }
   if (event.target.closest('#offer-clear-filters')) { $('#offer-search-input').value = ''; $('#offer-sort').value = 'opportunity'; $('#offer-discount').value = '0'; $('#offer-price-max').value = ''; renderOfferCatalog(); return; }
   const intervalPreset = event.target.closest('.interval-preset');
   if (intervalPreset) { $('#automation-interval').value = intervalPreset.dataset.automationInterval; document.querySelectorAll('.interval-preset').forEach(button => button.classList.toggle('active', button === intervalPreset)); return; }
@@ -317,6 +325,8 @@ document.addEventListener('click', async event => {
     toast('Integrações validadas.');
   } catch (error) { await reload(); summary.textContent = `A validação da Shopee precisa de atenção: ${error.message}`; toast(error.message, true); } return; }
   if (event.target.closest('#new-destination')) return $('#destination-dialog').showModal();
+  const editName = event.target.closest('.edit-destination-name');
+  if (editName) { const destination = (state.destinations || []).find(item => item.id === editName.dataset.id); const name = window.prompt('Nome exibido nos relatórios de cliques e vendas:', destination?.name || ''); if (name === null) return; try { await api(`/api/destinations/${editName.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ name }) }); await reload(); toast('Nome do grupo atualizado para os próximos relatórios.'); } catch (error) { toast(error.message, true); } return; }
   const editCategories = event.target.closest('.edit-destination-categories');
   if (editCategories) {
     const destination = (state.destinations || []).find(item => item.id === editCategories.dataset.id);

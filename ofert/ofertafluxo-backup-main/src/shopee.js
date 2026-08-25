@@ -48,3 +48,38 @@ export async function getShopeeOffers(settings, variables = {}, fetcher = fetch)
   if (cached?.expiresAt > Date.now()) return cached.data;
   throw new Error(`Não foi possível consultar a Shopee agora: ${failure?.message || 'falha de rede'}`);
 }
+
+/**
+ * Cria um short link de afiliado na Open API usando os cinco Sub IDs
+ * posicionais. A Shopee usa esses valores na atribuição de desempenho.
+ */
+export async function generateTrackedOfferLink(settings, originUrl, subIds, fetcher = fetch) {
+  if (!originUrl) throw new Error('A oferta não possui URL de origem para gerar o link rastreável.');
+  if (!settings.url || !settings.appId || !settings.secret) {
+    throw new Error('Conecte a Shopee antes de enviar: o link rastreável precisa da Open API.');
+  }
+  const clean = (subIds || []).map(value => String(value || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 50)).filter(Boolean);
+  const escapedUrl = String(originUrl).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const escapedSubs = clean.map(value => `"${value}"`).join(', ');
+  const query = `mutation { generateShortLink(input: {originUrl: "${escapedUrl}", subIds: [${escapedSubs}]}) { shortLink } }`;
+  const body = JSON.stringify({ query, variables: {} });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const requestSignature = signature(settings.appId, timestamp, body, settings.secret);
+  const response = await fetcher(settings.url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `SHA256 Credential=${settings.appId},Timestamp=${timestamp},Signature=${requestSignature}`,
+      ...settings.extraHeaders
+    },
+    body,
+    signal: AbortSignal.timeout(20_000)
+  });
+  const result = await response.json().catch(() => ({}));
+  const link = result?.data?.generateShortLink?.shortLink;
+  if (!response.ok || result.errors?.length || !link) {
+    const reason = result.errors?.[0]?.message || `Resposta inválida da Shopee (${response.status})`;
+    throw new Error(`Não foi possível gerar o link rastreável: ${reason}`);
+  }
+  return link;
+}

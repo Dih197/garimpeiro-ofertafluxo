@@ -14,6 +14,7 @@ import { currentShopeeCampaign } from './campaigns.js';
 import { automationWindowOpen, normalizeSafety, safetySummary } from './safety.js';
 import { allUsers, beginLogin, destroySession, disableTwoFactor, enableTwoFactor, finishTwoFactor, listUsers, registerUser, setupTwoFactor, userById, userFromSession, usersCount } from './auth.js';
 import { createDestinationSchedule, nextDueDestination, refreshDestinationSchedule, scheduleAfterRun, scheduleRetry, scheduleStatus } from './automation-schedule.js';
+import { trackingReport, trackingSummary } from './tracking.js';
 
 // Reutiliza as credenciais da instalação principal quando o módulo nativo
 // está incorporado ao Garimpeiro. Um .env local do OfertaFluxo continua tendo
@@ -44,6 +45,22 @@ function appSettings(user) {
     destinations: saved.destinations,
     userId: user.id
   };
+}
+function synchronizeGroupNames(userId, settings, groups = []) {
+  let changed = false;
+  for (const destination of settings.destinations || []) {
+    if (destination.type !== 'group') continue;
+    const live = groups.find(group => group.id === destination.number);
+    const subject = String(live?.subject || '').trim();
+    // Atualiza apenas cadastros antigos/genéricos, preservando apelidos definidos
+    // pelo usuário para os relatórios.
+    if (subject && (!destination.name || destination.name === destination.number || /^\d+$/.test(destination.name))) {
+      destination.name = subject;
+      changed = true;
+    }
+  }
+  if (changed) saveSettings(userId, settings);
+  return settings;
 }
 function json(response, status, payload) {
   response.writeHead(status, { ...securityHeaders(), 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -229,7 +246,8 @@ http.createServer(async (request, response) => {
     if (request.method === 'POST' && url.pathname === '/api/auth/2fa/enable') return json(response, 200, { user: enableTwoFactor(user.id, (await readBody(request)).code) });
     if (request.method === 'POST' && url.pathname === '/api/auth/2fa/disable') return json(response, 200, { user: disableTwoFactor(user.id, (await readBody(request)).code) });
     if (request.method === 'GET' && url.pathname === '/api/users') return json(response, 200, { users: listUsers(user), limit: 3 });
-    if (request.method === 'GET' && url.pathname === '/api/state') { if (directSessionExists(user.id)) connectDirectWhatsApp(user.id).catch(error => saveLog(user, 'error', `Falha ao reconectar WhatsApp: ${error.message}`)); const settings = appSettings(user); return json(response, 200, { ...publicSettings(settings), automationStatus: automationStatus(user, settings), categories, campaign: currentShopeeCampaign(), safetyStatus: safetySummary(user.id, settings.safety), directStatus: directWhatsAppState(user.id), running, activity: activity(user.id, 12), user }); }
+    if (request.method === 'GET' && url.pathname === '/api/state') { if (directSessionExists(user.id)) connectDirectWhatsApp(user.id).catch(error => saveLog(user, 'error', `Falha ao reconectar WhatsApp: ${error.message}`)); const settings = appSettings(user); const directStatus = directWhatsAppState(user.id); synchronizeGroupNames(user.id, settings, directStatus.groups); return json(response, 200, { ...publicSettings(settings), automationStatus: automationStatus(user, settings), categories, campaign: currentShopeeCampaign(), safetyStatus: safetySummary(user.id, settings.safety), directStatus, tracking: { ...trackingSummary(user.id), records: trackingReport(user.id, 80) }, running, activity: activity(user.id, 12), user }); }
+    if (request.method === 'GET' && url.pathname === '/api/tracking') return json(response, 200, { ...trackingSummary(user.id), records: trackingReport(user.id, 200) });
     if (request.method === 'POST' && url.pathname === '/api/whatsapp-direct/connect') {
       const result = await connectDirectWhatsApp(user.id); saveLog(user, 'info', 'Conexão direta do WhatsApp solicitada'); return json(response, 200, result);
     }
@@ -278,7 +296,11 @@ http.createServer(async (request, response) => {
     if (request.method === 'PATCH' && url.pathname.startsWith('/api/destinations/')) {
       const id = url.pathname.split('/').at(-1); const input = await readBody(request); const saved = loadSettings(base, user.id); const item = saved.destinations.find(d => d.id === id);
       if (!item) return json(response, 404, { error: 'Destino não encontrado' });
-      if (Array.isArray(input.categoryIds) || input.categoryId) {
+      if (typeof input.name === 'string') {
+        const name = String(input.name).trim();
+        if (!name) throw new Error('Informe um nome válido para identificar este grupo nos relatórios.');
+        item.name = name.slice(0, 100);
+      } else if (Array.isArray(input.categoryIds) || input.categoryId) {
         item.categoryIds = categoriesForDestination(input);
         item.categoryId = item.categoryIds[0];
       } else item.active = !item.active;
