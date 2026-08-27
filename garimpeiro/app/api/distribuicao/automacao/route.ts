@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import {
   buscarDestinoDistribuicao, buscarProduto, concluirEnvioDistribuicao, criarDestinoDistribuicao,
   excluirDestinoDistribuicao, limitesEnvioDistribuicao, listarDestinosDistribuicao, listarEnviosDistribuicao,
-  registrarEnvioDistribuicao, salvarLinkCanal, atualizarDestinoDistribuicao, obterAutomacaoDistribuicao,
-  salvarAutomacaoDistribuicao, obterSegurancaDistribuicao, salvarSegurancaDistribuicao
+  registrarEnvioDistribuicao, salvarLinkCanal, criarLinkRastreado, atualizarDestinoDistribuicao, obterAutomacaoDistribuicao,
+  salvarAutomacaoDistribuicao, obterSegurancaDistribuicao, salvarSegurancaDistribuicao, resumoCliquesRastreados
 } from "@/lib/db";
 import { escreverConfig, lerConfig } from "@/lib/configs";
 import { listarCampanhasGrupo } from "@/lib/campanhas-grupo";
@@ -38,6 +38,7 @@ export async function GET() {
     destinos: listarDestinosDistribuicao(),
     envios: listarEnviosDistribuicao(),
     campanhasGrupo: listarCampanhasGrupo(),
+    cliquesRastreados: resumoCliquesRastreados(30),
     agenda: obterAutomacaoDistribuicao(),
     seguranca: obterSegurancaDistribuicao(),
     direto,
@@ -147,8 +148,15 @@ export async function POST(req: Request) {
       if (gerado.ok && gerado.shortLink) link = gerado.shortLink;
     }
     if (!link) return NextResponse.json({ ok: false, erro: "Este produto não possui link para distribuição." }, { status: 400 });
-    salvarLinkCanal(produto.id, "wpp", link);
-    const texto = textoOfertaWhatsApp(produto, link);
+    const linkRastreado = criarLinkRastreado({
+      produtoId: produto.id,
+      destinoId: destino.id,
+      canal: "wpp",
+      urlDestino: link,
+      baseUrl: new URL(req.url).origin
+    });
+    salvarLinkCanal(produto.id, "wpp", linkRastreado);
+    const texto = textoOfertaWhatsApp(produto, linkRastreado);
     const envio = registrarEnvioDistribuicao(produto.id, destino.id, texto);
     try {
       if (provedor === "cloud") await enviarTextoWhatsAppCloud({ ...cloud, para: destino.destino, texto });

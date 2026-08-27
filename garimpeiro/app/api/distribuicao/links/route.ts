@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buscarProduto, salvarLinkCanal } from "@/lib/db";
+import { buscarProduto, criarLinkRastreado, salvarLinkCanal } from "@/lib/db";
 import { gerarLinkComSubIds, shopeeConfigurado } from "@/lib/shopee";
 import { lerJson, textoSeguro, validarMesmaOrigem } from "@/lib/api";
 
@@ -32,8 +32,9 @@ export async function POST(req: Request) {
       else avisos.push(`${canal}: ${gerado.erro || "link não gerado"}`);
     }
     if (link) {
-      links[canal] = link;
-      salvarLinkCanal(produto.id, canal, link);
+      const rastreado = criarLinkRastreado({ produtoId: produto.id, canal, urlDestino: link, baseUrl: new URL(req.url).origin });
+      links[canal] = rastreado;
+      salvarLinkCanal(produto.id, canal, rastreado);
     }
   }
   return NextResponse.json({ ok: true, links, avisos });

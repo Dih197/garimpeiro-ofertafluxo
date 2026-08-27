@@ -134,6 +134,25 @@ function inicializarSchema(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_links_produto ON links_canal(produto_id);
 
+    -- Links públicos do sistema: registram o clique antes de abrir a oferta Shopee.
+    CREATE TABLE IF NOT EXISTS links_rastreados (
+      token TEXT PRIMARY KEY,
+      produto_id TEXT NOT NULL,
+      destino_id TEXT DEFAULT '',
+      canal TEXT NOT NULL,
+      url_destino TEXT NOT NULL,
+      criado_em TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_links_rastreados_produto ON links_rastreados(produto_id, canal);
+    CREATE TABLE IF NOT EXISTS eventos_clique_rastreado (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT NOT NULL,
+      referer TEXT DEFAULT '',
+      criado_em TEXT NOT NULL,
+      FOREIGN KEY(token) REFERENCES links_rastreados(token) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_eventos_clique_rastreado_data ON eventos_clique_rastreado(criado_em DESC);
+
     -- Destinos próprios que receberam autorização para distribuição via API.
     CREATE TABLE IF NOT EXISTS destinos_distribuicao (
       id TEXT PRIMARY KEY,
@@ -645,6 +664,34 @@ export function listarLinksDoProduto(produtoId: string): Array<{ canal: string; 
     canal: string; link: string; criado_em: string;
   }>;
   return rows.map((r) => ({ canal: r.canal, link: r.link, criadoEm: r.criado_em }));
+}
+
+// ============ RASTREIO AUTOMÁTICO DE CLIQUES ============
+export function criarLinkRastreado(input: { produtoId: string; destinoId?: string; canal: string; urlDestino: string; baseUrl: string }): string {
+  const token = crypto.randomBytes(12).toString("base64url");
+  db().prepare("INSERT INTO links_rastreados (token,produto_id,destino_id,canal,url_destino,criado_em) VALUES (?,?,?,?,?,?)")
+    .run(token, input.produtoId, input.destinoId || "", input.canal.slice(0, 40), input.urlDestino, new Date().toISOString());
+  return `${input.baseUrl.replace(/\/$/, "")}/c/${token}`;
+}
+
+export function resolverLinkRastreado(token: string): { urlDestino: string } | null {
+  const row = db().prepare("SELECT url_destino FROM links_rastreados WHERE token=?").get(token) as { url_destino: string } | undefined;
+  return row ? { urlDestino: row.url_destino } : null;
+}
+
+export function registrarCliqueRastreado(token: string, referer = ""): boolean {
+  const existe = db().prepare("SELECT 1 FROM links_rastreados WHERE token=?").get(token);
+  if (!existe) return false;
+  db().prepare("INSERT INTO eventos_clique_rastreado (token,referer,criado_em) VALUES (?,?,?)")
+    .run(token, referer.slice(0, 500), new Date().toISOString());
+  return true;
+}
+
+export function resumoCliquesRastreados(dias = 30): { total: number; porCanal: Array<{ canal: string; cliques: number }> } {
+  const inicio = new Date(Date.now() - Math.max(1, dias) * 86_400_000).toISOString();
+  const total = (db().prepare("SELECT COUNT(*) n FROM eventos_clique_rastreado WHERE criado_em>=?").get(inicio) as { n: number }).n;
+  const rows = db().prepare(`SELECT l.canal canal, COUNT(*) cliques FROM eventos_clique_rastreado e JOIN links_rastreados l ON l.token=e.token WHERE e.criado_em>=? GROUP BY l.canal ORDER BY cliques DESC`).all(inicio) as Array<{ canal: string; cliques: number }>;
+  return { total, porCanal: rows };
 }
 
 // ============ DISTRIBUIÇÃO WHATSAPP ============

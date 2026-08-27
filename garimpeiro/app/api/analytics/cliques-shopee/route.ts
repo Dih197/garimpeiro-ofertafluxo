@@ -3,7 +3,8 @@ import {
   listarCliquesShopee,
   listarMetricasShopee,
   salvarCliquesShopeeDia,
-  salvarMetricasShopeeDia
+  salvarMetricasShopeeDia,
+  resumoCliquesRastreados
 } from "@/lib/db";
 import { lerJson, numeroNoIntervalo, textoSeguro, validarMesmaOrigem } from "@/lib/api";
 
@@ -15,7 +16,7 @@ export async function GET(req: Request) {
   const cliques = listarCliquesShopee(dias);
   const metricas = listarMetricasShopee(dias);
   const totalCliques = cliques.reduce((s, c) => s + c.cliques, 0);
-  return NextResponse.json({ ok: true, cliques, metricas, totalCliques });
+  return NextResponse.json({ ok: true, cliques, metricas, totalCliques, rastreados: resumoCliquesRastreados(dias) });
 }
 
 export async function POST(req: Request) {
