@@ -184,6 +184,8 @@ type PerformanceShopee = {
   cliquesShopeeVideo: number | null;
   cliquesShopeeLive: number | null;
   fonteCliques: "painel_shopee" | "rastreador_proprio" | "mista" | "indisponivel";
+  diasComCliques: number;
+  diasNoPeriodo: number;
   pedidos: number;
   itensVendidos: number;
   comissaoEstimada: number;
@@ -1782,7 +1784,7 @@ function CardConteudoShopee({
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-xs font-black uppercase tracking-wider text-zinc-200">Métricas principais Shopee</div>
-                <div className="mt-0.5 text-[10px] text-zinc-500">{origemCliques} · vendas e comissão vêm da API oficial</div>
+                <div className="mt-0.5 text-[10px] text-zinc-500">{origemCliques} · cobertura: {performance.diasComCliques}/{performance.diasNoPeriodo} dias · vendas e comissão vêm da API oficial</div>
               </div>
               <button
                 type="button"
@@ -1823,6 +1825,12 @@ function CardConteudoShopee({
                 <span className="text-lg font-black tabular-nums text-rose-300">{performance.cliquesShopeeLive === null ? "—" : formatNumber(performance.cliquesShopeeLive)}</span>
               </div>
             </div>
+
+            {performance.cliquesTotal !== null && performance.diasComCliques < performance.diasNoPeriodo && (
+              <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-3 py-2.5 text-[10px] leading-relaxed text-amber-100">
+                <span className="font-black">Leitura parcial de cliques:</span> há dados em {performance.diasComCliques} de {performance.diasNoPeriodo} dias deste filtro. Por isso, {formatNumber(performance.cliquesTotal)} não representa o total do período na Shopee. Os próximos cliques de links enviados pela plataforma entram automaticamente; para completar o histórico, importe o relatório oficial dos dias restantes.
+              </div>
+            )}
 
             {performance.cliquesTotal === null && !editandoCliques && (
               <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">

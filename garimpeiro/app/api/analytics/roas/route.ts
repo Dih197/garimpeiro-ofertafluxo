@@ -776,6 +776,8 @@ type PerformanceShopee = {
   cliquesShopeeVideo: number | null;
   cliquesShopeeLive: number | null;
   fonteCliques: "painel_shopee" | "rastreador_proprio" | "mista" | "indisponivel";
+  diasComCliques: number;
+  diasNoPeriodo: number;
   pedidos: number;
   itensVendidos: number;
   comissaoEstimada: number;
@@ -1217,6 +1219,7 @@ function montarPerformanceShopee(
     ? "indisponivel"
     : fontes.size > 1 ? "mista"
     : fontes.has("rastreador_proprio") ? "rastreador_proprio" : "painel_shopee";
+  const diasNoPeriodo = listarDatasPeriodo(1, periodoInicio, periodoFim).length;
   const produtos = new Map<string, PerformanceShopee["topProdutos"][number]>();
 
   for (const conversao of conversoes) {
@@ -1251,6 +1254,8 @@ function montarPerformanceShopee(
     cliquesShopeeVideo: temMetricas ? somaMetrica("cliquesShopeeVideo") : null,
     cliquesShopeeLive: temMetricas ? somaMetrica("cliquesShopeeLive") : null,
     fonteCliques,
+    diasComCliques: metricas.length,
+    diasNoPeriodo,
     pedidos: new Set(conversoes.map((conversao) => conversao.orderId)).size,
     itensVendidos: conversoes.reduce((total, conversao) => total + Math.max(1, conversao.quantidade || 1), 0),
     comissaoEstimada: parseFloat(conversoes.reduce((total, conversao) => total + conversao.totalCommission, 0).toFixed(2)),
