@@ -11,6 +11,7 @@ import { dataHojeBR, dataOntemBR, dataDiasAtrasBR, dataUltimoFechamentoShopeeBR,
 import { classificarCanal, type CategoriaCanal, type TipoTrafego } from "@/lib/canais";
 import { resolverInfoMoeda, lerInfoMoeda, type InfoMoeda } from "@/lib/cambio";
 import { numeroNoIntervalo, validarMesmaOrigem } from "@/lib/api";
+import { classificarStatusPedido, pedidoEhValido, resumirPedidosRoi, type ResumoPedidosRoi } from "@/lib/roi-metrics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 90;
@@ -475,6 +476,7 @@ function montarRelatorioMock(dias: number, inicio?: string, fim?: string) {
   const breakdownCanal = montarBreakdownCanal(convFiltro);
   const conteudoShopee = montarConteudoShopee(convFiltro, dias, inicio, fim);
   const resumoShopee = montarResumoShopeePeriodo(convFiltro);
+  const resumoPedidos = resumirPedidosRoi(convFiltro);
   const analiseCookies = montarAnaliseCookies(convFiltro);
   const analiseRedirect = montarAnaliseRedirect(insightsFiltro, convFiltro, dias, inicio, fim);
   const problemasDropoff = diagnosticarDropoff(insightsFiltro, porAnuncio, analiseRedirect);
@@ -513,6 +515,8 @@ function montarRelatorioMock(dias: number, inicio?: string, fim?: string) {
       multiplicador: projecao.multiplicador
     },
     conversoesBrutas: convFiltro,
+    resumoPedidos,
+    meta: { disponibilidade: "atual" as const, configurada: true, erro: null, possuiCache: true },
     infoMoeda: lerInfoMoeda()
   };
 }
@@ -609,16 +613,20 @@ function construirSerieDiariaCompleta(
     if (!cur) continue;
     const cls = classificarCanal({ subId: c.subId, referrer: c.referrer, channelType: c.channelType });
     const quantidade = Math.max(1, c.quantidade || 1);
-    const status = String(c.status || "").toUpperCase();
-    const cancelado = status.includes("CANCEL") || status.includes("REFUND");
-    const confirmado = status === "2" || status === "COMPLETED" || status === "SETTLED";
+    const estado = classificarStatusPedido(c.status);
 
     cur.pedidosTotal += 1;
+    if (estado === "cancelado") {
+      cur.pedidosCancelados += 1;
+      continue;
+    }
+    // Estados não reconhecidos ficam fora das métricas até a Shopee confirmar o significado.
+    if (estado === "desconhecido") continue;
+
     cur.itensVendidos += quantidade;
     cur.faturamentoTotal += c.amount;
     if (/NEW|NOVO/.test(String(c.buyerType || "").toUpperCase())) cur.novosCompradores += 1;
-    if (cancelado) cur.pedidosCancelados += 1;
-    else if (confirmado) cur.comissaoConfirmada += c.totalCommission;
+    if (estado === "concluido") cur.comissaoConfirmada += c.totalCommission;
     else cur.comissaoPendente += c.totalCommission;
 
     if (cls.tipo === "campanha") {
@@ -697,8 +705,9 @@ function construirSerieLucroDiario(
     if (cur) cur.spend += i.spend;
   }
 
-  // Soma toda a comissão Shopee; lucro histórico inclui orgânico e pago.
+  // Comissão estimada só de pedidos concluídos ou pendentes; cancelados não entram.
   for (const c of conversoes) {
+    if (!pedidoEhValido(c)) continue;
     const dia = fmtBR.format(new Date(c.purchaseTime * 1000));
     const cur = mapaDias.get(dia);
     if (cur) cur.comissao += c.totalCommission;
@@ -784,7 +793,14 @@ type ResumoShopeePeriodo = {
   comissao: number;
   comissaoConfirmada: number;
   comissaoPendente: number;
+  pedidosGerados: number;
+  pedidosCancelados: number;
+  pedidosDesconhecidos: number;
+  ticketMedio: number | null;
+  taxaCancelamentoPct: number | null;
 };
+
+type DisponibilidadeMeta = "atual" | "cache" | "indisponivel";
 
 /**
  * Análise da janela de cookie da Shopee (7 dias).
@@ -900,7 +916,7 @@ function diagnosticarDropoff(
   }
 
   // 6. PERDA DE REDIRECT MUITO ALTA
-  if (redirect.temDadosShopee && redirect.perdaPct > 70) {
+  if (redirect.coberturaCompativel && redirect.perdaPct !== null && redirect.perdaPct > 70) {
     problemas.push({
       prioridade: "alta",
       categoria: "configuracao",
@@ -936,15 +952,17 @@ type AnaliseRedirect = {
   /** Cliques contabilizados pela Shopee (input manual do dashboard) */
   cliquesShopee: number;
   /** % de cliques Meta que NÃO chegaram à Shopee — gargalo de redirect */
-  perdaPct: number;
+  perdaPct: number | null;
   /** Cliques perdidos = Meta - Shopee */
   cliquesPerdidos: number;
   /** CPC real considerando só os cliques que chegaram à Shopee (mais honesto que o CPC Meta) */
-  cpcShopeeReal: number;
+  cpcShopeeReal: number | null;
   /** Conversão real = vendas / cliques Shopee */
-  conversaoRealPct: number;
+  conversaoRealPct: number | null;
   /** Indica se há registros de cliques Shopee no período (se não, drop-off não pode ser calculado) */
   temDadosShopee: boolean;
+  /** Só é verdadeira quando os cliques Shopee são marcados como tráfego Meta comparável. */
+  coberturaCompativel: boolean;
   /** Diário pra UI: data + meta + shopee */
   porDia: Array<{ data: string; cliquesMeta: number; cliquesShopee: number; perda: number }>;
 };
@@ -996,18 +1014,19 @@ function montarAnaliseRedirect(
 
   const cliquesMeta = Array.from(porDiaMap.values()).reduce((s, v) => s + v.cliquesMeta, 0);
   const cliquesShopee = Array.from(porDiaMap.values()).reduce((s, v) => s + v.cliquesShopee, 0);
-  const cliquesPerdidos = Math.max(0, cliquesMeta - cliquesShopee);
-  const perdaPct = cliquesMeta > 0 && cliquesShopee >= 0 && cliquesShopee <= cliquesMeta
+  const coberturaCompativel = cliquesShopeeFiltro.some((c) => /meta|facebook|instagram/i.test(String(c.origem || "")));
+  const cliquesPerdidos = coberturaCompativel ? Math.max(0, cliquesMeta - cliquesShopee) : 0;
+  const perdaPct = coberturaCompativel && cliquesMeta > 0 && cliquesShopee <= cliquesMeta
     ? (cliquesPerdidos / cliquesMeta) * 100
-    : 0;
+    : null;
   const spendTotal = insights.reduce((s, i) => s + i.spend, 0);
-  const cpcShopeeReal = cliquesShopee > 0 ? spendTotal / cliquesShopee : 0;
+  const cpcShopeeReal = coberturaCompativel && cliquesShopee > 0 ? spendTotal / cliquesShopee : null;
 
   // Vendas Meta Ads no período (mesma classificação da função de roas)
   const vendasMetaAds = conversoes.filter((c) =>
-    classificarCanal({ subId: c.subId, referrer: c.referrer, channelType: c.channelType }).categoria === "meta_ads"
+    pedidoEhValido(c) && classificarCanal({ subId: c.subId, referrer: c.referrer, channelType: c.channelType }).categoria === "meta_ads"
   ).length;
-  const conversaoRealPct = cliquesShopee > 0 ? (vendasMetaAds / cliquesShopee) * 100 : 0;
+  const conversaoRealPct = coberturaCompativel && cliquesShopee > 0 ? (vendasMetaAds / cliquesShopee) * 100 : null;
 
   const porDia = Array.from(porDiaMap.entries()).map(([data, v]) => ({
     data,
@@ -1019,11 +1038,12 @@ function montarAnaliseRedirect(
   return {
     cliquesMeta,
     cliquesShopee,
-    perdaPct: parseFloat(perdaPct.toFixed(1)),
+    perdaPct: perdaPct === null ? null : parseFloat(perdaPct.toFixed(1)),
     cliquesPerdidos,
-    cpcShopeeReal: parseFloat(cpcShopeeReal.toFixed(2)),
-    conversaoRealPct: parseFloat(conversaoRealPct.toFixed(2)),
+    cpcShopeeReal: cpcShopeeReal === null ? null : parseFloat(cpcShopeeReal.toFixed(2)),
+    conversaoRealPct: conversaoRealPct === null ? null : parseFloat(conversaoRealPct.toFixed(2)),
     temDadosShopee: cliquesShopeeFiltro.length > 0,
+    coberturaCompativel,
     porDia
   };
 }
@@ -1065,6 +1085,7 @@ function montarAnaliseCookies(conversoes: ConversaoLocal[]): AnaliseCookies {
   const delays: number[] = [];
 
   for (const c of conversoes) {
+    if (!pedidoEhValido(c)) continue;
     const click = c.clickTime || 0;
     const purchase = c.purchaseTime || 0;
     const delay = click > 0 && purchase > click ? purchase - click : 0;
@@ -1100,7 +1121,7 @@ function montarAnaliseCookies(conversoes: ConversaoLocal[]): AnaliseCookies {
   const mediana = delays.length > 0 ? delays[Math.floor(delays.length / 2)] : 0;
   const media = delays.length > 0 ? delays.reduce((s, v) => s + v, 0) / delays.length : 0;
 
-  const totalVendas = conversoes.length;
+  const totalVendas = conversoes.filter(pedidoEhValido).length;
   const vendasComCookie =
     distribuicaoDelay.ate24h.vendas +
     distribuicaoDelay.ate3d.vendas +
@@ -1127,6 +1148,7 @@ function montarBreakdownCanal(conversoes: ConversaoLocal[]): BreakdownCanal {
   const porCategoria: BreakdownCanal["porCategoria"] = {};
 
   for (const c of conversoes) {
+    if (!pedidoEhValido(c)) continue;
     const cls = classificarCanal({ subId: c.subId, referrer: c.referrer, channelType: c.channelType });
     const alvo = cls.tipo === "campanha" ? campanha : organico;
     alvo.vendas += 1;
@@ -1147,25 +1169,19 @@ function montarBreakdownCanal(conversoes: ConversaoLocal[]): BreakdownCanal {
 }
 
 function montarResumoShopeePeriodo(conversoes: ConversaoLocal[]): ResumoShopeePeriodo {
-  let faturamento = 0;
-  let comissao = 0;
-  let comissaoConfirmada = 0;
-
-  for (const c of conversoes) {
-    faturamento += c.amount;
-    comissao += c.totalCommission;
-    const status = String(c.status || "").toUpperCase();
-    if (status === "2" || status === "COMPLETED" || status === "SETTLED") {
-      comissaoConfirmada += c.totalCommission;
-    }
-  }
+  const resumo = resumirPedidosRoi(conversoes);
 
   return {
-    vendas: conversoes.length,
-    faturamento: parseFloat(faturamento.toFixed(2)),
-    comissao: parseFloat(comissao.toFixed(2)),
-    comissaoConfirmada: parseFloat(comissaoConfirmada.toFixed(2)),
-    comissaoPendente: parseFloat(Math.max(0, comissao - comissaoConfirmada).toFixed(2))
+    vendas: resumo.pedidosValidos,
+    faturamento: resumo.gmvValido,
+    comissao: resumo.comissaoEstimada,
+    comissaoConfirmada: resumo.comissaoConfirmada,
+    comissaoPendente: resumo.comissaoPendente,
+    pedidosGerados: resumo.pedidosGerados,
+    pedidosCancelados: resumo.pedidosCancelados,
+    pedidosDesconhecidos: resumo.pedidosDesconhecidos,
+    ticketMedio: resumo.ticketMedioValido,
+    taxaCancelamentoPct: resumo.taxaCancelamentoPct
   };
 }
 
@@ -1187,6 +1203,7 @@ function montarPerformanceShopee(
   const produtos = new Map<string, PerformanceShopee["topProdutos"][number]>();
 
   for (const conversao of conversoes) {
+    if (!pedidoEhValido(conversao)) continue;
     const chave = String(conversao.itemId || conversao.produtoNome || conversao.orderId);
     const quantidade = Math.max(1, conversao.quantidade || 1);
     const atual = produtos.get(chave) || {
@@ -1251,7 +1268,8 @@ function montarConteudoShopee(
   inicio?: string,
   fim?: string
 ): ConteudoShopee {
-  const totalComissaoGeral = conversoes.reduce((s, c) => s + c.totalCommission, 0);
+  const conversoesValidas = conversoes.filter(pedidoEhValido);
+  const totalComissaoGeral = conversoesValidas.reduce((s, c) => s + c.totalCommission, 0);
   const datas = listarDatasPeriodo(dias, inicio, fim);
   const porDiaMap = new Map<
     string,
@@ -1263,7 +1281,7 @@ function montarConteudoShopee(
   const liveConversoes: ConversaoLocal[] = [];
   const produtos = new Map<string, ConteudoShopee["topProdutos"][number]>();
 
-  for (const c of conversoes) {
+  for (const c of conversoesValidas) {
     const cls = classificarCanal({ subId: c.subId, referrer: c.referrer, channelType: c.channelType });
     if (cls.categoria !== "shopee_video" && cls.categoria !== "shopee_live") continue;
 
@@ -1308,7 +1326,7 @@ function montarConteudoShopee(
       faturamento: parseFloat(faturamento.toFixed(2)),
       comissao: parseFloat(comissao.toFixed(2)),
       ticketMedio: vendas > 0 ? parseFloat((faturamento / vendas).toFixed(2)) : 0,
-      participacaoVendasPct: conversoes.length > 0 ? parseFloat(((vendas / conversoes.length) * 100).toFixed(1)) : 0,
+      participacaoVendasPct: conversoesValidas.length > 0 ? parseFloat(((vendas / conversoesValidas.length) * 100).toFixed(1)) : 0,
       participacaoComissaoPct: totalComissaoGeral > 0 ? parseFloat(((comissao / totalComissaoGeral) * 100).toFixed(1)) : 0,
       comissaoPorVenda: vendas > 0 ? parseFloat((comissao / vendas).toFixed(2)) : 0
     };
@@ -1375,6 +1393,8 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
   serieDiariaCompleta?: PontoDiarioCompleto[];
   projecao?: { vendasFinais: number; comissaoFinal: number; lucroProjetadoFinal: number; roasProjetadoFinal: number; multiplicador: number };
   conversoesBrutas: ConversaoLocal[];
+  resumoPedidos: ResumoPedidosRoi;
+  meta: { disponibilidade: DisponibilidadeMeta; configurada: boolean; erro: string | null; possuiCache: boolean };
   infoMoeda: InfoMoeda;
 } {
   const info = lerInfoMoeda();
@@ -1419,6 +1439,12 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
     conversoes = conversoes.filter((c) => c.purchaseTime >= tsInicio);
   }
 
+  const erroMeta = ultimoErroMeta();
+  const possuiCacheMeta = insights.length > 0;
+  const disponibilidadeMeta: DisponibilidadeMeta = !metaConfigurado() || (!possuiCacheMeta && Boolean(erroMeta))
+    ? "indisponivel"
+    : erroMeta ? "cache" : "atual";
+
   // Agrupa insights por adId (soma os dias)
   const porAd = new Map<string, MetaInsightLocal & { _count: number }>();
   for (const i of insights) {
@@ -1438,6 +1464,7 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
   // Agrupa conversoes por sub_id_2 (criativo) — apenas vendas classificadas como Meta Ads
   const conversoesPorSub2 = new Map<string, ConversaoLocal[]>();
   for (const c of conversoes) {
+    if (!pedidoEhValido(c)) continue;
     const cls = classificarCanal({ subId: c.subId, referrer: c.referrer, channelType: c.channelType });
     if (cls.categoria !== "meta_ads") continue;
     const key = c.subId2 || "_sem_criativo";
@@ -1590,6 +1617,7 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
     }
 
     for (const c of conversoes) {
+      if (!pedidoEhValido(c)) continue;
       const cls = classificarCanal({ subId: c.subId, referrer: c.referrer, channelType: c.channelType });
       if (cls.categoria !== "meta_ads") continue;
       const sub2Conv = c.subId2 || "_sem_criativo";
@@ -1698,19 +1726,34 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
     porCriativo[k].roas = porCriativo[k].spend > 0 ? porCriativo[k].comissao / porCriativo[k].spend : 0;
   }
 
+  // Sem fonte Meta atual, o cache serve apenas para contexto; não gera ações automáticas.
+  if (disponibilidadeMeta !== "atual") {
+    for (const anuncio of porAnuncio) {
+      anuncio.recomendacao = "AGUARDAR";
+      anuncio.motivo = disponibilidadeMeta === "cache"
+        ? "Dados Meta em cache; aguarde a sincronização antes de decidir."
+        : "Meta indisponível; sem recomendação até receber dados válidos.";
+    }
+  }
+
   // Alertas inteligentes
   const alertas: string[] = [];
+  if (disponibilidadeMeta === "indisponivel") {
+    alertas.push("Meta Ads indisponível neste período. Métricas de mídia, ROAS, CPC e CTR são N/D — não zero.");
+  } else if (disponibilidadeMeta === "cache") {
+    alertas.push("Meta Ads com dados em cache. Recomendações automáticas ficam pausadas até a próxima sincronização.");
+  }
   const totalSpend = consolidado.spendBRL;
-  if (totalSpend > 0 && consolidado.vendas === 0) {
+  if (disponibilidadeMeta === "atual" && totalSpend > 0 && consolidado.vendas === 0) {
     alertas.push(`Já gastou R$ ${totalSpend.toFixed(2)} sem vendas atribuídas. Verifique se Sub_ID 'MetaAds' está cadastrado nos links.`);
   }
-  if (consolidado.lucro < -10) {
+  if (disponibilidadeMeta === "atual" && consolidado.lucro < -10) {
     alertas.push(`Prejuízo consolidado de R$ ${Math.abs(consolidado.lucro).toFixed(2)}. Avalie pausar anúncios com CPC alto.`);
   }
-  if (consolidado.lucro > 50 && consolidado.roas > 2) {
+  if (disponibilidadeMeta === "atual" && consolidado.lucro > 50 && consolidado.roas > 2) {
     alertas.push(`Conta lucrativa! ROAS ${consolidado.roas.toFixed(2)}x — ideal pra escalar gradual (+50%/dia).`);
   }
-  const ativosSemDados = porAnuncio.filter((a) => a.status === "ACTIVE" && a.spend === 0).length;
+  const ativosSemDados = disponibilidadeMeta === "atual" ? porAnuncio.filter((a) => a.status === "ACTIVE" && a.spend === 0).length : 0;
   if (ativosSemDados > 0) {
     alertas.push(`${ativosSemDados} anúncio(s) ATIVO(s) sem entrega. CBO pode estar concentrando gasto.`);
   }
@@ -1755,10 +1798,10 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
   const analiseCookies = montarAnaliseCookies(conversoesPerformance);
   const analiseRedirect = montarAnaliseRedirect(insights, conversoes, dias, inicio, fim);
   const problemasDropoff = diagnosticarDropoff(insights, porAnuncio, analiseRedirect);
-  if (analiseRedirect.temDadosShopee && analiseRedirect.perdaPct > 50) {
-    alertas.push(`🚨 ${analiseRedirect.perdaPct.toFixed(0)}% dos cliques Meta (${analiseRedirect.cliquesPerdidos}) NÃO chegam à Shopee. CPC Shopee real: ${analiseRedirect.cpcShopeeReal.toFixed(2).replace(".", ",")} R$/clique.`);
+  if (analiseRedirect.coberturaCompativel && analiseRedirect.perdaPct !== null && analiseRedirect.perdaPct > 50) {
+    alertas.push(`🚨 ${analiseRedirect.perdaPct.toFixed(0)}% dos cliques Meta (${analiseRedirect.cliquesPerdidos}) NÃO chegam à Shopee. CPC Shopee real: ${analiseRedirect.cpcShopeeReal?.toFixed(2).replace(".", ",")} R$/clique.`);
   }
-  if (breakdownCanal.organico.vendas > 0 && consolidado.spend === 0) {
+  if (breakdownCanal.organico.vendas > 0 && disponibilidadeMeta === "atual" && consolidado.spend === 0) {
     alertas.push(`💚 ${breakdownCanal.organico.vendas} venda(s) orgânica(s) (R$ ${breakdownCanal.organico.comissao.toFixed(2)} de comissão) sem custo de tráfego. Continue produzindo conteúdo!`);
   }
   if (breakdownCanal.organico.vendas > 0 && breakdownCanal.campanha.vendas > 0) {
@@ -1775,6 +1818,7 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
   const serieFim = usandoUltimoDisponivel ? performanceFim : fim;
   const serieInsights = usandoUltimoDisponivel ? [] : insights;
   const metricasHistorico = listarMetricasShopee(Math.max(dias + 10, 30));
+  const resumoPedidos = resumirPedidosRoi(conversoesPerformance);
   const serieLucroDiario = construirSerieLucroDiario(
     serieInsights,
     conversoesPerformance,
@@ -1832,6 +1876,13 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
       multiplicador: projecao.multiplicador
     },
     conversoesBrutas: conversoes,
+    resumoPedidos,
+    meta: {
+      disponibilidade: disponibilidadeMeta,
+      configurada: metaConfigurado(),
+      erro: erroMeta,
+      possuiCache: possuiCacheMeta
+    },
     infoMoeda: info
   };
 }

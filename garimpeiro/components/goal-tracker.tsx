@@ -6,12 +6,13 @@ import { Target, Trophy, Flame, Edit3, Check, X as XIcon } from "lucide-react";
 
 type GoalTrackerProps = {
   comissaoAtual: number;
+  comissaoEstimada?: number;
   lucroAtual: number;
   diasNoPerido: number;
   diasTotais: number;
 };
 
-export function GoalTracker({ comissaoAtual, lucroAtual, diasNoPerido, diasTotais }: GoalTrackerProps) {
+export function GoalTracker({ comissaoAtual, comissaoEstimada, lucroAtual, diasNoPerido, diasTotais }: GoalTrackerProps) {
   const [metaMensal, setMetaMensal] = useState<number>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("garimpeiro_meta_mensal");
@@ -21,18 +22,23 @@ export function GoalTracker({ comissaoAtual, lucroAtual, diasNoPerido, diasTotai
   });
   const [editing, setEditing] = useState(false);
   const [tempMeta, setTempMeta] = useState(String(metaMensal));
+  const [visao, setVisao] = useState<"confirmada" | "estimada">("confirmada");
 
   useEffect(() => {
     localStorage.setItem("garimpeiro_meta_mensal", String(metaMensal));
   }, [metaMensal]);
 
   const stats = useMemo(() => {
-    const pctAtingido = metaMensal > 0 ? (lucroAtual / metaMensal) * 100 : 0;
-    const mediaDiaria = diasNoPerido > 0 ? lucroAtual / diasNoPerido : 0;
-    const diasRestantes = Math.max(0, diasTotais - diasNoPerido);
-    const projecaoFinal = lucroAtual + mediaDiaria * diasRestantes;
+    const valorBase = visao === "estimada" && comissaoEstimada !== undefined ? comissaoEstimada : comissaoAtual;
+    const agora = new Date();
+    const diasCalendario = new Date(agora.getFullYear(), agora.getMonth() + 1, 0).getDate();
+    const diasDecorridos = agora.getDate();
+    const diasRestantes = Math.max(0, diasCalendario - diasDecorridos);
+    const pctAtingido = metaMensal > 0 ? (valorBase / metaMensal) * 100 : 0;
+    const mediaDiaria = diasDecorridos > 0 ? valorBase / diasDecorridos : 0;
+    const projecaoFinal = valorBase + mediaDiaria * diasRestantes;
     const pctProjetado = metaMensal > 0 ? (projecaoFinal / metaMensal) * 100 : 0;
-    const faltaPraMeta = Math.max(0, metaMensal - lucroAtual);
+    const faltaPraMeta = Math.max(0, metaMensal - valorBase);
     const precisaPorDia = diasRestantes > 0 ? faltaPraMeta / diasRestantes : faltaPraMeta;
 
     let statusEmoji: string;
@@ -69,7 +75,7 @@ export function GoalTracker({ comissaoAtual, lucroAtual, diasNoPerido, diasTotai
       statusColor,
       atingiu: pctAtingido >= 100
     };
-  }, [lucroAtual, metaMensal, diasNoPerido, diasTotais]);
+  }, [comissaoAtual, comissaoEstimada, diasNoPerido, diasTotais, lucroAtual, metaMensal, visao]);
 
   function salvarMeta() {
     const val = parseFloat(tempMeta);
@@ -91,6 +97,8 @@ export function GoalTracker({ comissaoAtual, lucroAtual, diasNoPerido, diasTotai
           <span className={cn("text-xs font-bold", stats.statusColor)}>{stats.statusLabel}</span>
         </div>
       </div>
+
+      {comissaoEstimada !== undefined && <div className="mb-4 inline-flex rounded-lg border border-white/10 p-1 text-[10px] font-bold"><button onClick={() => setVisao("confirmada")} className={cn("rounded-md px-2.5 py-1.5", visao === "confirmada" ? "bg-emerald-500/20 text-emerald-300" : "text-zinc-500")}>Confirmada</button><button onClick={() => setVisao("estimada")} className={cn("rounded-md px-2.5 py-1.5", visao === "estimada" ? "bg-amber-500/20 text-amber-300" : "text-zinc-500")}>Estimada</button></div>}
 
       {/* META VALUE */}
       <div className="flex items-center gap-3 mb-4">
@@ -148,14 +156,14 @@ export function GoalTracker({ comissaoAtual, lucroAtual, diasNoPerido, diasTotai
             {stats.pctAtingido.toFixed(0)}%
           </span>
           <span className="text-zinc-600">
-            {formatBRL(lucroAtual)} / {formatBRL(metaMensal)}
+            {formatBRL(visao === "estimada" && comissaoEstimada !== undefined ? comissaoEstimada : comissaoAtual)} / {formatBRL(metaMensal)}
           </span>
         </div>
       </div>
 
       {/* STATS GRID */}
       <div className="mt-4 grid grid-cols-2 gap-3">
-        <MiniStat label="Lucro/dia" valor={formatBRL(stats.mediaDiaria)} cor={stats.mediaDiaria >= 0 ? "emerald" : "rose"} />
+        <MiniStat label={`${visao === "estimada" ? "Estimativa" : "Confirmado"}/dia`} valor={formatBRL(stats.mediaDiaria)} cor={stats.mediaDiaria >= 0 ? "emerald" : "rose"} />
         <MiniStat label="Falta" valor={formatBRL(stats.faltaPraMeta)} cor="amber" />
         <MiniStat label="Precisa/dia" valor={formatBRL(stats.precisaPorDia)} cor="indigo" />
         <MiniStat label="Dias restantes" valor={String(stats.diasRestantes)} cor="zinc" />
@@ -169,6 +177,7 @@ export function GoalTracker({ comissaoAtual, lucroAtual, diasNoPerido, diasTotai
           </span>
         </div>
       )}
+      <p className="mt-3 text-[10px] leading-relaxed text-zinc-600">Projeção linear baseada no acumulado do mês-calendário. Alterne entre comissão confirmada e estimada para decidir com transparência.</p>
     </div>
   );
 }

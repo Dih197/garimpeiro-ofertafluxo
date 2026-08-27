@@ -203,6 +203,11 @@ type ResumoShopeePeriodo = {
   comissao: number;
   comissaoConfirmada: number;
   comissaoPendente: number;
+  pedidosGerados: number;
+  pedidosCancelados: number;
+  pedidosDesconhecidos: number;
+  ticketMedio: number | null;
+  taxaCancelamentoPct: number | null;
 };
 
 export type ConversaoLocal = {
@@ -260,6 +265,12 @@ type RelatorioRoas = {
   conteudoShopee?: ConteudoShopee;
   performanceShopee?: PerformanceShopee;
   resumoShopee?: ResumoShopeePeriodo;
+  resumoPedidos?: {
+    pedidosGerados: number; pedidosValidos: number; pedidosConcluidos: number; pedidosPendentes: number;
+    pedidosCancelados: number; pedidosDesconhecidos: number; itensValidos: number; gmvGerado: number; gmvValido: number;
+    comissaoEstimada: number; comissaoConfirmada: number; comissaoPendente: number; ticketMedioValido: number | null; taxaCancelamentoPct: number | null;
+  };
+  meta?: { disponibilidade: "atual" | "cache" | "indisponivel"; configurada: boolean; erro: string | null; possuiCache: boolean };
   analiseCookies?: AnaliseCookies;
   analiseRedirect?: AnaliseRedirect;
   problemasDropoff?: ProblemaDropoff[];
@@ -668,11 +679,14 @@ ${insights?.fadigas?.length ? `Fadigas: ${insights.fadigas.map((f) => `${f.adNam
     const resumoPeriodo = relatorio?.resumoShopee;
     const redir = relatorio?.analiseRedirect;
     return {
+      metaDisponivel: relatorio?.meta?.disponibilidade !== "indisponivel",
+      metaEmCache: relatorio?.meta?.disponibilidade === "cache",
       gastoMeta: r?.spendComImposto || 0,
       // O resumo do relatório respeita exatamente o período/range selecionado.
       // `stats` continua como fallback para respostas antigas do servidor.
       comissaoTotal: resumoPeriodo?.comissao ?? s?.totalComissao ?? r?.comissao ?? 0,
       comissaoConfirmada: resumoPeriodo?.comissaoConfirmada ?? s?.totalComissaoConfirmada ?? 0,
+      comissaoPendente: resumoPeriodo?.comissaoPendente ?? 0,
       receita: resumoPeriodo?.faturamento ?? s?.totalRevenue ?? 0,
       vendasTotal: resumoPeriodo?.vendas ?? s?.totalVendas ?? 0,
       vendasMetaAds: r?.vendas || 0,
@@ -685,12 +699,10 @@ ${insights?.fadigas?.length ? `Fadigas: ${insights.fadigas.map((f) => `${f.adNam
       cliques: r?.linkClicks || 0,
       cliquesOutbound: r?.outboundClicks || 0,
       cliquesShopee: redir?.cliquesShopee || 0,
-      perdaRedirectPct: redir?.perdaPct || 0,
-      cpcShopeeReal: redir?.cpcShopeeReal || 0,
+      perdaRedirectPct: redir?.perdaPct ?? 0,
+      cpcShopeeReal: redir?.cpcShopeeReal ?? 0,
       temDadosShopee: redir?.temDadosShopee || false,
-      ticketMedio: (resumoPeriodo?.vendas ?? s?.totalVendas ?? 0) > 0
-        ? (resumoPeriodo?.faturamento ?? s?.totalRevenue ?? 0) / (resumoPeriodo?.vendas ?? s?.totalVendas ?? 1)
-        : 0
+      ticketMedio: resumoPeriodo?.ticketMedio ?? ((resumoPeriodo?.vendas ?? s?.totalVendas ?? 0) > 0 ? (resumoPeriodo?.faturamento ?? s?.totalRevenue ?? 0) / (resumoPeriodo?.vendas ?? s?.totalVendas ?? 1) : 0)
     };
   }, [relatorio, statsShopee]);
 
@@ -2077,6 +2089,8 @@ function AbaGeral({
     : `${periodoLabel}: ${cg.vendasTotal} venda(s), ${formatBRL(cg.receita)} em faturamento e ${formatBRL(cg.comissaoTotal)} de comissão. Gasto Meta com imposto: ${formatBRL(cg.gastoMeta)} · resultado estimado: ${formatBRL(cg.lucroLiquidoEstimado)}.`;
   return (
     <>
+      {relatorio.meta?.disponibilidade === "indisponivel" && <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.08] p-4 text-sm text-amber-100"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" /><div><b>Meta Ads indisponível.</b><p className="mt-1 text-xs text-amber-200/80">ROAS, CPC, CTR, gasto e recomendações são N/D neste período. Os dados da Shopee continuam sendo mostrados separadamente.</p></div></div>}
+      {relatorio.meta?.disponibilidade === "cache" && <div className="mb-5 rounded-xl border border-sky-500/25 bg-sky-500/[0.06] p-3 text-xs text-sky-200">Meta Ads em cache: os números históricos permanecem visíveis, mas nenhuma recomendação de pausar ou escalar é gerada até a sincronização.</div>}
       {/* SAÚDE DA CONTA META + RESUMO DIÁRIO */}
       {insights && (insights.saude || insights.resumo.textoNarrativo) && (
         <section className="mb-6 grid gap-4 lg:grid-cols-3">
@@ -2295,16 +2309,16 @@ function AbaResumoExecutivo({
   periodoLabel
 }: {
   cg: {
-    gastoMeta: number; comissaoTotal: number; comissaoConfirmada: number; lucroLiquido: number; roasGeral: number;
+    gastoMeta: number; comissaoTotal: number; comissaoConfirmada: number; comissaoPendente: number; lucroLiquido: number; roasGeral: number;
     cliques: number; cliquesOutbound: number; cliquesShopee: number; perdaRedirectPct: number; cpcShopeeReal: number; temDadosShopee: boolean;
-    vendasTotal: number; vendasMetaAds: number; cpcMedio: number; ticketMedio: number; receita: number;
+    vendasTotal: number; vendasMetaAds: number; cpcMedio: number; ticketMedio: number; receita: number; metaDisponivel: boolean; metaEmCache: boolean;
   };
   relatorio: RelatorioRoas;
   stats: StatsShopee | null;
   dias: number;
   periodoLabel: string;
 }) {
-  const ctr = relatorio.consolidado.impressions > 0
+  const ctr = !cg.metaDisponivel ? null : relatorio.consolidado.impressions > 0
     ? (relatorio.consolidado.linkClicks / relatorio.consolidado.impressions) * 100
     : 0;
 
@@ -2326,16 +2340,16 @@ function AbaResumoExecutivo({
       {/* HEALTH + GOAL — side by side */}
       <div className="grid gap-4 lg:grid-cols-2">
         <HealthScore
-          roas={cg.roasGeral}
+          roas={cg.metaDisponivel ? cg.roasGeral : null}
           ctr={ctr}
-          cpc={cg.cpcMedio}
-          gastoTotal={cg.gastoMeta}
-          receita={cg.receita}
-          conversoes={cg.vendasMetaAds}
-          clicks={cg.cliques}
+          cpc={cg.metaDisponivel ? cg.cpcMedio : null}
+          conversoes={cg.metaDisponivel ? cg.vendasMetaAds : null}
+          clicks={cg.metaDisponivel ? cg.cliques : null}
+          confiancaDados={relatorio.meta?.disponibilidade === "atual" ? 100 : relatorio.meta?.disponibilidade === "cache" ? 60 : 0}
         />
         <GoalTracker
           comissaoAtual={cg.comissaoConfirmada}
+          comissaoEstimada={cg.comissaoTotal}
           lucroAtual={cg.lucroLiquido}
           diasNoPerido={dias}
           diasTotais={30}
@@ -2346,7 +2360,8 @@ function AbaResumoExecutivo({
       <DREPanel
         receitaBruta={cg.receita}
         comissaoShopee={cg.comissaoConfirmada}
-        gastoMeta={relatorio.consolidado.spendBRL ?? relatorio.consolidado.spend}
+        comissaoPendente={cg.comissaoPendente}
+        gastoMeta={cg.metaDisponivel ? relatorio.consolidado.spendBRL ?? relatorio.consolidado.spend : null}
         periodo={periodoLabel}
         diasNoPerido={dias}
         impostoMetaPct={relatorio.infoMoeda?.impostoMeta ?? 0.13}
