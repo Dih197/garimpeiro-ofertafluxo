@@ -13,6 +13,7 @@ export type PontoDiarioCompleto = {
   cliquesShopeeTotal: number;
   cliquesRedesSociais: number;
   cliquesShopeeVideo: number;
+  cliquesShopeeLive: number;
   temDadosCliquesShopee: boolean;
   pedidosTotal: number;
   itensVendidos: number;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listarConversoes, listarMetaInsights, listarCliquesShopee, listarMetricasShopee } from "@/lib/db";
+import { listarConversoes, listarMetaInsights, listarCliquesShopee, listarMetricasShopee, listarMetricasCliquesRastreados } from "@/lib/db";
 import { metaConfigurado, resolverAdAccountId, listarAdsComCreative, buscarInsightsPorAd, extrairLinkDoCreative, inferirSubIdsDoAdName, ultimoErroMeta } from "@/lib/meta";
 import { buscarConversoes, shopeeConfigurado } from "@/lib/shopee";
 import { salvarConversoes, salvarMetaInsights, type ConversaoLocal, type MetaInsightLocal } from "@/lib/db";
@@ -531,6 +531,7 @@ type PontoDiarioCompleto = {
   cliquesShopeeTotal: number;
   cliquesRedesSociais: number;
   cliquesShopeeVideo: number;
+  cliquesShopeeLive: number;
   temDadosCliquesShopee: boolean;
   pedidosTotal: number;
   itensVendidos: number;
@@ -584,7 +585,7 @@ function construirSerieDiariaCompleta(
     mapa.set(d, {
       data: d, spendMeta: 0, spendMetaComImposto: 0,
       impressoesMeta: 0, cliquesMeta: 0,
-      cliquesShopeeTotal: 0, cliquesRedesSociais: 0, cliquesShopeeVideo: 0,
+      cliquesShopeeTotal: 0, cliquesRedesSociais: 0, cliquesShopeeVideo: 0, cliquesShopeeLive: 0,
       temDadosCliquesShopee: false,
       pedidosTotal: 0, itensVendidos: 0, faturamentoTotal: 0,
       novosCompradores: 0, pedidosCancelados: 0,
@@ -652,6 +653,7 @@ function construirSerieDiariaCompleta(
     cur.cliquesShopeeTotal += metrica.cliquesTotal;
     cur.cliquesRedesSociais += metrica.cliquesRedesSociais;
     cur.cliquesShopeeVideo += metrica.cliquesShopeeVideo;
+    cur.cliquesShopeeLive += metrica.cliquesShopeeLive;
     cur.temDadosCliquesShopee = true;
   }
 
@@ -772,6 +774,8 @@ type PerformanceShopee = {
   cliquesTotal: number | null;
   cliquesRedesSociais: number | null;
   cliquesShopeeVideo: number | null;
+  cliquesShopeeLive: number | null;
+  fonteCliques: "painel_shopee" | "rastreador_proprio" | "mista" | "indisponivel";
   pedidos: number;
   itensVendidos: number;
   comissaoEstimada: number;
@@ -786,6 +790,14 @@ type PerformanceShopee = {
     valorPedidos: number;
   }>;
 };
+
+/** O painel Shopee prevalece quando existe. Nos outros dias entram os cliques automáticos dos links da plataforma. */
+function listarMetricasShopeeComRastreamento(diasAtras = 730) {
+  const porDia = new Map<string, ReturnType<typeof listarMetricasShopee>[number]>();
+  for (const metrica of listarMetricasCliquesRastreados(diasAtras)) porDia.set(metrica.data, metrica);
+  for (const metrica of listarMetricasShopee(diasAtras)) porDia.set(metrica.data, metrica);
+  return Array.from(porDia.values()).sort((a, b) => b.data.localeCompare(a.data));
+}
 
 type ResumoShopeePeriodo = {
   vendas: number;
@@ -1198,8 +1210,13 @@ function montarPerformanceShopee(
   dataSolicitada?: string,
   usandoUltimoDisponivel = false
 ): PerformanceShopee {
-  const metricas = listarMetricasShopee(730).filter((item) => item.data >= periodoInicio && item.data <= periodoFim);
+  const metricas = listarMetricasShopeeComRastreamento(730).filter((item) => item.data >= periodoInicio && item.data <= periodoFim);
   const temMetricas = metricas.length > 0;
+  const fontes = new Set(metricas.map((item) => item.fonte));
+  const fonteCliques: PerformanceShopee["fonteCliques"] = !temMetricas
+    ? "indisponivel"
+    : fontes.size > 1 ? "mista"
+    : fontes.has("rastreador_proprio") ? "rastreador_proprio" : "painel_shopee";
   const produtos = new Map<string, PerformanceShopee["topProdutos"][number]>();
 
   for (const conversao of conversoes) {
@@ -1220,7 +1237,7 @@ function montarPerformanceShopee(
     produtos.set(chave, atual);
   }
 
-  const somaMetrica = (campo: "cliquesTotal" | "cliquesRedesSociais" | "cliquesShopeeVideo") =>
+  const somaMetrica = (campo: "cliquesTotal" | "cliquesRedesSociais" | "cliquesShopeeVideo" | "cliquesShopeeLive") =>
     metricas.reduce((total, item) => total + item[campo], 0);
 
   return {
@@ -1232,6 +1249,8 @@ function montarPerformanceShopee(
     cliquesTotal: temMetricas ? somaMetrica("cliquesTotal") : null,
     cliquesRedesSociais: temMetricas ? somaMetrica("cliquesRedesSociais") : null,
     cliquesShopeeVideo: temMetricas ? somaMetrica("cliquesShopeeVideo") : null,
+    cliquesShopeeLive: temMetricas ? somaMetrica("cliquesShopeeLive") : null,
+    fonteCliques,
     pedidos: new Set(conversoes.map((conversao) => conversao.orderId)).size,
     itensVendidos: conversoes.reduce((total, conversao) => total + Math.max(1, conversao.quantidade || 1), 0),
     comissaoEstimada: parseFloat(conversoes.reduce((total, conversao) => total + conversao.totalCommission, 0).toFixed(2)),
@@ -1817,7 +1836,7 @@ function montarRelatorio(dias: number, inicio?: string, fim?: string): {
   const serieInicio = usandoUltimoDisponivel ? performanceInicio : inicio;
   const serieFim = usandoUltimoDisponivel ? performanceFim : fim;
   const serieInsights = usandoUltimoDisponivel ? [] : insights;
-  const metricasHistorico = listarMetricasShopee(Math.max(dias + 10, 30));
+  const metricasHistorico = listarMetricasShopeeComRastreamento(Math.max(dias + 10, 30));
   const resumoPedidos = resumirPedidosRoi(conversoesPerformance);
   const serieLucroDiario = construirSerieLucroDiario(
     serieInsights,

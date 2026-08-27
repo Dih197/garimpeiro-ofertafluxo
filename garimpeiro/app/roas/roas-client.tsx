@@ -182,6 +182,8 @@ type PerformanceShopee = {
   cliquesTotal: number | null;
   cliquesRedesSociais: number | null;
   cliquesShopeeVideo: number | null;
+  cliquesShopeeLive: number | null;
+  fonteCliques: "painel_shopee" | "rastreador_proprio" | "mista" | "indisponivel";
   pedidos: number;
   itensVendidos: number;
   comissaoEstimada: number;
@@ -1691,19 +1693,29 @@ function CardConteudoShopee({
   const [dataCliques, setDataCliques] = useState(dataEfetiva);
   const [cliquesRedes, setCliquesRedes] = useState("");
   const [cliquesVideo, setCliquesVideo] = useState("");
+  const [cliquesLive, setCliquesLive] = useState("");
   const [salvandoCliques, setSalvandoCliques] = useState(false);
   const [feedbackCliques, setFeedbackCliques] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  const origemCliques = performance?.fonteCliques === "rastreador_proprio"
+    ? "Rastreamento automático"
+    : performance?.fonteCliques === "mista"
+      ? "Painel Shopee + rastreamento"
+      : performance?.fonteCliques === "painel_shopee"
+        ? "Painel oficial Shopee"
+        : "Sem cliques no período";
 
   useEffect(() => {
     setDataCliques(dataEfetiva);
     setCliquesRedes(performance?.cliquesRedesSociais === null || performance?.cliquesRedesSociais === undefined ? "" : String(performance.cliquesRedesSociais));
     setCliquesVideo(performance?.cliquesShopeeVideo === null || performance?.cliquesShopeeVideo === undefined ? "" : String(performance.cliquesShopeeVideo));
-  }, [dataEfetiva, performance?.cliquesRedesSociais, performance?.cliquesShopeeVideo]);
+    setCliquesLive(performance?.cliquesShopeeLive === null || performance?.cliquesShopeeLive === undefined ? "" : String(performance.cliquesShopeeLive));
+  }, [dataEfetiva, performance?.cliquesRedesSociais, performance?.cliquesShopeeVideo, performance?.cliquesShopeeLive]);
 
   async function salvarCliquesPerformance() {
     const redes = Number(cliquesRedes || 0);
     const video = Number(cliquesVideo || 0);
-    if (!Number.isFinite(redes) || !Number.isFinite(video) || redes < 0 || video < 0) {
+    const live = Number(cliquesLive || 0);
+    if (!Number.isFinite(redes) || !Number.isFinite(video) || !Number.isFinite(live) || redes < 0 || video < 0 || live < 0) {
       setFeedbackCliques({ tipo: "erro", texto: "Informe números válidos, iguais ou maiores que zero." });
       return;
     }
@@ -1716,12 +1728,13 @@ function CardConteudoShopee({
         body: JSON.stringify({
           data: dataCliques,
           cliquesRedesSociais: Math.floor(redes),
-          cliquesShopeeVideo: Math.floor(video)
+          cliquesShopeeVideo: Math.floor(video),
+          cliquesShopeeLive: Math.floor(live)
         })
       });
       const json = await resposta.json();
       if (!json.ok) throw new Error(json.erro || "Não foi possível salvar os cliques.");
-      setFeedbackCliques({ tipo: "ok", texto: `${Math.floor(redes + video)} cliques registrados no resumo Shopee.` });
+      setFeedbackCliques({ tipo: "ok", texto: `${Math.floor(redes + video + live)} cliques registrados no resumo Shopee.` });
       onAtualizar();
     } catch (erro) {
       setFeedbackCliques({ tipo: "erro", texto: (erro as Error).message });
@@ -1769,14 +1782,14 @@ function CardConteudoShopee({
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-xs font-black uppercase tracking-wider text-zinc-200">Métricas principais Shopee</div>
-                <div className="mt-0.5 text-[10px] text-zinc-500">Mesmo formato do Painel de Controle do Afiliado</div>
+                <div className="mt-0.5 text-[10px] text-zinc-500">{origemCliques} · vendas e comissão vêm da API oficial</div>
               </div>
               <button
                 type="button"
                 onClick={() => setEditandoCliques((valor) => !valor)}
                 className="rounded-lg border border-orange-500/25 bg-orange-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-orange-300 transition hover:bg-orange-500/20"
               >
-                {editandoCliques ? "Fechar" : "Atualizar cliques"}
+                {editandoCliques ? "Fechar" : "Importar painel Shopee"}
               </button>
             </div>
 
@@ -1796,7 +1809,7 @@ function CardConteudoShopee({
               ))}
             </div>
 
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
               <div className="flex items-center justify-between rounded-xl border border-blue-500/15 bg-blue-500/[0.04] px-4 py-3">
                 <span className="text-xs font-semibold text-zinc-300">Redes sociais</span>
                 <span className="text-lg font-black tabular-nums text-blue-300">{performance.cliquesRedesSociais === null ? "—" : formatNumber(performance.cliquesRedesSociais)}</span>
@@ -1805,17 +1818,21 @@ function CardConteudoShopee({
                 <span className="text-xs font-semibold text-zinc-300">Shopee Vídeo</span>
                 <span className="text-lg font-black tabular-nums text-orange-300">{performance.cliquesShopeeVideo === null ? "—" : formatNumber(performance.cliquesShopeeVideo)}</span>
               </div>
+              <div className="flex items-center justify-between rounded-xl border border-rose-500/15 bg-rose-500/[0.04] px-4 py-3">
+                <span className="text-xs font-semibold text-zinc-300">Shopee Live</span>
+                <span className="text-lg font-black tabular-nums text-rose-300">{performance.cliquesShopeeLive === null ? "—" : formatNumber(performance.cliquesShopeeLive)}</span>
+              </div>
             </div>
 
             {performance.cliquesTotal === null && !editandoCliques && (
               <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
-                Pedidos, itens, comissão, valor e compradores vêm automaticamente da API oficial. A API não libera cliques; registre os dois números exibidos em “Detalhes de cliques”.
+                Pedidos, itens, comissão, valor e compradores vêm automaticamente da API oficial. Os links enviados pela plataforma registram cliques automaticamente; para completar Shopee Vídeo e Live, importe os números do relatório oficial por dia.
               </p>
             )}
 
             {editandoCliques && (
               <div className="mt-3 rounded-xl border border-orange-500/20 bg-orange-500/[0.04] p-3">
-                <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid gap-2 sm:grid-cols-4">
                   <label className="space-y-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
                     Data do painel
                     <input type="date" value={dataCliques} onChange={(evento) => setDataCliques(evento.target.value)} className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs font-medium normal-case tracking-normal text-zinc-200" />
@@ -1828,9 +1845,13 @@ function CardConteudoShopee({
                     Shopee Vídeo
                     <input type="number" min="0" value={cliquesVideo} onChange={(evento) => setCliquesVideo(evento.target.value)} placeholder="Ex: 40" className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs font-medium normal-case tracking-normal text-zinc-200" />
                   </label>
+                  <label className="space-y-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                    Shopee Live
+                    <input type="number" min="0" value={cliquesLive} onChange={(evento) => setCliquesLive(evento.target.value)} placeholder="Ex: 13" className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-xs font-medium normal-case tracking-normal text-zinc-200" />
+                  </label>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[10px] text-zinc-500">Total calculado: <span className="font-black text-zinc-200">{formatNumber(Math.max(0, Number(cliquesRedes || 0)) + Math.max(0, Number(cliquesVideo || 0)))}</span></div>
+                  <div className="text-[10px] text-zinc-500">O painel oficial tem prioridade sobre o rastreador automático nesta data. Total: <span className="font-black text-zinc-200">{formatNumber(Math.max(0, Number(cliquesRedes || 0)) + Math.max(0, Number(cliquesVideo || 0)) + Math.max(0, Number(cliquesLive || 0)))}</span></div>
                   <button type="button" onClick={salvarCliquesPerformance} disabled={salvandoCliques} className="rounded-lg bg-orange-500 px-4 py-2 text-xs font-black text-white transition hover:bg-orange-400 disabled:opacity-50">
                     {salvandoCliques ? "Salvando..." : "Salvar métricas"}
                   </button>
@@ -2809,6 +2830,7 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
     const cliques = dados.reduce((s, d) => s + d.cliquesShopeeTotal, 0);
     const cliquesRedes = dados.reduce((s, d) => s + d.cliquesRedesSociais, 0);
     const cliquesVideo = dados.reduce((s, d) => s + d.cliquesShopeeVideo, 0);
+    const cliquesLive = dados.reduce((s, d) => s + d.cliquesShopeeLive, 0);
     const temCliques = dados.some((d) => d.temDadosCliquesShopee);
     const novos = dados.reduce((s, d) => s + d.novosCompradores, 0);
     const cancelados = dados.reduce((s, d) => s + d.pedidosCancelados, 0);
@@ -2825,7 +2847,7 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
     const conversaoVideo = cliquesVideo > 0 ? (video / cliquesVideo) * 100 : null;
     const comissaoCliqueVideo = cliquesVideo > 0 ? dados.reduce((s, d) => s + d.comissaoVideo, 0) / cliquesVideo : null;
     return {
-      pedidos, pedidosGerados, itens, faturamento, comissao, confirmada, pendente, cliques, cliquesRedes, cliquesVideo,
+      pedidos, pedidosGerados, itens, faturamento, comissao, confirmada, pendente, cliques, cliquesRedes, cliquesVideo, cliquesLive,
       temCliques, novos, cancelados, video, live, lucro, diasAtivos, melhorDia, ticketMedio, conversaoVideo, comissaoCliqueVideo
     };
   }, [dados]);
@@ -2895,7 +2917,7 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
           <MetricaHistorico label="Pedidos válidos" valor={formatNumber(resumo.pedidos)} detalhe={`${resumo.itens} item(ns) · ${resumo.cancelados} cancelado(s) excluído(s)`} icon={ShoppingBag} cor="orange" />
           <MetricaHistorico label="GMV válido" valor={formatBRL(resumo.faturamento)} detalhe={resumo.ticketMedio === null ? "Sem pedidos válidos" : `Ticket médio ${formatBRL(resumo.ticketMedio)}`} icon={DollarSign} cor="violet" />
           <MetricaHistorico label="Comissão estimada" valor={formatBRL(resumo.comissao)} detalhe={`${formatBRL(resumo.confirmada)} confirmada · ${formatBRL(resumo.pendente)} pendente`} icon={Wallet} cor="emerald" />
-          <MetricaHistorico label="Cliques rastreados" valor={resumo.temCliques ? formatNumber(resumo.cliques) : "N/D"} detalhe={resumo.temCliques ? `${resumo.cliquesRedes} redes sociais · ${resumo.cliquesVideo} Shopee Vídeo` : "Aguardando origem compatível"} icon={MousePointerClick} cor="cyan" />
+          <MetricaHistorico label="Cliques disponíveis" valor={resumo.temCliques ? formatNumber(resumo.cliques) : "N/D"} detalhe={resumo.temCliques ? `${resumo.cliquesRedes} redes · ${resumo.cliquesVideo} vídeo · ${resumo.cliquesLive} live` : "Links próprios ainda sem cliques"} icon={MousePointerClick} cor="cyan" />
           <MetricaHistorico label="Conversão Shopee Vídeo" valor={resumo.conversaoVideo === null ? "N/D" : `${resumo.conversaoVideo.toFixed(2)}%`} detalhe={resumo.conversaoVideo === null ? "Sem cliques de vídeo" : "Pedidos de vídeo ÷ cliques de vídeo"} icon={Target} cor="cyan" />
           <MetricaHistorico label="Conteúdo Shopee" valor={`${resumo.video} vídeo · ${resumo.live} live`} detalhe={resumo.comissaoCliqueVideo === null ? "Eficiência de vídeo N/D" : `Comissão/vídeo ${formatBRL(resumo.comissaoCliqueVideo)}`} icon={Video} cor="violet" />
         </div>
@@ -2957,7 +2979,7 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
                       </td>
                       <td className="px-3 py-3">
                         <div className="font-black tabular-nums text-cyan-300">{dia.temDadosCliquesShopee ? formatNumber(dia.cliquesShopeeTotal) : "—"}</div>
-                        <div className="text-[9px] text-zinc-600">{dia.temDadosCliquesShopee ? `${dia.cliquesRedesSociais} social · ${dia.cliquesShopeeVideo} vídeo` : "sem relatório"}</div>
+                        <div className="text-[9px] text-zinc-600">{dia.temDadosCliquesShopee ? `${dia.cliquesRedesSociais} social · ${dia.cliquesShopeeVideo} vídeo · ${dia.cliquesShopeeLive} live` : "sem relatório"}</div>
                       </td>
                       <td className="px-3 py-3">
                         <div className="font-black tabular-nums text-zinc-200">{dia.pedidosTotal} / {dia.itensVendidos}</div>

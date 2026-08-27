@@ -139,6 +139,7 @@ function inicializarSchema(d: Database.Database) {
       token TEXT PRIMARY KEY,
       produto_id TEXT NOT NULL,
       destino_id TEXT DEFAULT '',
+      shopee_app_id TEXT NOT NULL DEFAULT '',
       canal TEXT NOT NULL,
       url_destino TEXT NOT NULL,
       criado_em TEXT NOT NULL
@@ -298,6 +299,10 @@ function inicializarSchema(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_eventos_grupo_campanha ON eventos_grupo(campanha_id, criado_em DESC);
     CREATE INDEX IF NOT EXISTS idx_eventos_grupo_tipo ON eventos_grupo(tipo, criado_em DESC);
   `);
+  const colunasLinksRastreados = (d.prepare("PRAGMA table_info(links_rastreados)").all() as Array<{ name: string }>).map(c => c.name);
+  if (!colunasLinksRastreados.includes("shopee_app_id")) {
+    try { d.exec("ALTER TABLE links_rastreados ADD COLUMN shopee_app_id TEXT NOT NULL DEFAULT ''"); } catch {}
+  }
 
   // Migrações: adicionar colunas novas se DB antigo
   const colunasCampanhas = (d.prepare("PRAGMA table_info(campanhas_grupo)").all() as Array<{ name: string }>).map(c => c.name);
@@ -409,12 +414,17 @@ function inicializarSchema(d: Database.Database) {
       cliques_total INTEGER NOT NULL DEFAULT 0,
       cliques_redes_sociais INTEGER NOT NULL DEFAULT 0,
       cliques_shopee_video INTEGER NOT NULL DEFAULT 0,
+      cliques_shopee_live INTEGER NOT NULL DEFAULT 0,
       fonte TEXT NOT NULL DEFAULT 'painel_shopee',
       atualizado_em TEXT NOT NULL,
       PRIMARY KEY (data, shopee_app_id)
     );
     CREATE INDEX IF NOT EXISTS idx_metricas_shopee_data ON metricas_shopee_diarias(data DESC);
   `);
+  const colunasMetricasShopee = (d.prepare("PRAGMA table_info(metricas_shopee_diarias)").all() as Array<{ name: string }>).map(c => c.name);
+  if (!colunasMetricasShopee.includes("cliques_shopee_live")) {
+    try { d.exec("ALTER TABLE metricas_shopee_diarias ADD COLUMN cliques_shopee_live INTEGER NOT NULL DEFAULT 0"); } catch {}
+  }
 
   // Índices do cache Meta (a tabela já foi criada antes das migrações).
   d.exec(`
@@ -669,8 +679,8 @@ export function listarLinksDoProduto(produtoId: string): Array<{ canal: string; 
 // ============ RASTREIO AUTOMÁTICO DE CLIQUES ============
 export function criarLinkRastreado(input: { produtoId: string; destinoId?: string; canal: string; urlDestino: string; baseUrl: string }): string {
   const token = crypto.randomBytes(12).toString("base64url");
-  db().prepare("INSERT INTO links_rastreados (token,produto_id,destino_id,canal,url_destino,criado_em) VALUES (?,?,?,?,?,?)")
-    .run(token, input.produtoId, input.destinoId || "", input.canal.slice(0, 40), input.urlDestino, new Date().toISOString());
+  db().prepare("INSERT INTO links_rastreados (token,produto_id,destino_id,shopee_app_id,canal,url_destino,criado_em) VALUES (?,?,?,?,?,?,?)")
+    .run(token, input.produtoId, input.destinoId || "", appIdShopeeAtual(), input.canal.slice(0, 40), input.urlDestino, new Date().toISOString());
   return `${input.baseUrl.replace(/\/$/, "")}/c/${token}`;
 }
 
@@ -689,9 +699,42 @@ export function registrarCliqueRastreado(token: string, referer = ""): boolean {
 
 export function resumoCliquesRastreados(dias = 30): { total: number; porCanal: Array<{ canal: string; cliques: number }> } {
   const inicio = new Date(Date.now() - Math.max(1, dias) * 86_400_000).toISOString();
-  const total = (db().prepare("SELECT COUNT(*) n FROM eventos_clique_rastreado WHERE criado_em>=?").get(inicio) as { n: number }).n;
-  const rows = db().prepare(`SELECT l.canal canal, COUNT(*) cliques FROM eventos_clique_rastreado e JOIN links_rastreados l ON l.token=e.token WHERE e.criado_em>=? GROUP BY l.canal ORDER BY cliques DESC`).all(inicio) as Array<{ canal: string; cliques: number }>;
+  const appId = appIdShopeeAtual();
+  const total = (db().prepare("SELECT COUNT(*) n FROM eventos_clique_rastreado e JOIN links_rastreados l ON l.token=e.token WHERE e.criado_em>=? AND l.shopee_app_id=?").get(inicio, appId) as { n: number }).n;
+  const rows = db().prepare(`SELECT l.canal canal, COUNT(*) cliques FROM eventos_clique_rastreado e JOIN links_rastreados l ON l.token=e.token WHERE e.criado_em>=? AND l.shopee_app_id=? GROUP BY l.canal ORDER BY cliques DESC`).all(inicio, appId) as Array<{ canal: string; cliques: number }>;
   return { total, porCanal: rows };
+}
+
+/**
+ * Agrega os cliques que atravessaram links criados pela própria plataforma.
+ * É a fonte automática: não depende de digitação nem mistura contas Shopee.
+ */
+export function listarMetricasCliquesRastreados(diasAtras = 730): MetricasShopeeDia[] {
+  const appId = appIdShopeeAtual();
+  const inicio = new Date(Date.now() - Math.max(1, diasAtras) * 86_400_000).toISOString();
+  const rows = db().prepare(`
+    SELECT e.criado_em, lower(l.canal) AS canal
+    FROM eventos_clique_rastreado e
+    JOIN links_rastreados l ON l.token = e.token
+    WHERE e.criado_em >= ? AND l.shopee_app_id = ?
+    ORDER BY e.criado_em DESC
+  `).all(inicio, appId) as Array<{ criado_em: string; canal: string }>;
+
+  const porDia = new Map<string, MetricasShopeeDia>();
+  const formatarDataBR = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" });
+  for (const row of rows) {
+    const data = formatarDataBR.format(new Date(row.criado_em));
+    const atual = porDia.get(data) || {
+      data, cliquesTotal: 0, cliquesRedesSociais: 0, cliquesShopeeVideo: 0,
+      cliquesShopeeLive: 0, fonte: "rastreador_proprio", atualizadoEm: new Date().toISOString()
+    };
+    atual.cliquesTotal += 1;
+    if (["shopeevd", "shopee_video", "video"].includes(row.canal)) atual.cliquesShopeeVideo += 1;
+    else if (["shopeelive", "shopee_live", "live"].includes(row.canal)) atual.cliquesShopeeLive += 1;
+    else atual.cliquesRedesSociais += 1;
+    porDia.set(data, atual);
+  }
+  return Array.from(porDia.values()).sort((a, b) => b.data.localeCompare(a.data));
 }
 
 // ============ DISTRIBUIÇÃO WHATSAPP ============
@@ -1185,6 +1228,7 @@ export type MetricasShopeeDia = {
   cliquesTotal: number;
   cliquesRedesSociais: number;
   cliquesShopeeVideo: number;
+  cliquesShopeeLive: number;
   fonte: string;
   atualizadoEm: string;
 };
@@ -1193,12 +1237,13 @@ export function salvarMetricasShopeeDia(metricas: Omit<MetricasShopeeDia, "atual
   const appId = appIdShopeeAtual();
   db().prepare(`
     INSERT INTO metricas_shopee_diarias
-      (data, shopee_app_id, cliques_total, cliques_redes_sociais, cliques_shopee_video, fonte, atualizado_em)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (data, shopee_app_id, cliques_total, cliques_redes_sociais, cliques_shopee_video, cliques_shopee_live, fonte, atualizado_em)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(data, shopee_app_id) DO UPDATE SET
       cliques_total = excluded.cliques_total,
       cliques_redes_sociais = excluded.cliques_redes_sociais,
       cliques_shopee_video = excluded.cliques_shopee_video,
+      cliques_shopee_live = excluded.cliques_shopee_live,
       fonte = excluded.fonte,
       atualizado_em = excluded.atualizado_em
   `).run(
@@ -1207,6 +1252,7 @@ export function salvarMetricasShopeeDia(metricas: Omit<MetricasShopeeDia, "atual
     Math.max(0, Math.floor(metricas.cliquesTotal)),
     Math.max(0, Math.floor(metricas.cliquesRedesSociais)),
     Math.max(0, Math.floor(metricas.cliquesShopeeVideo)),
+    Math.max(0, Math.floor(metricas.cliquesShopeeLive)),
     metricas.fonte || "painel_shopee",
     new Date().toISOString()
   );
@@ -1216,7 +1262,7 @@ export function listarMetricasShopee(diasAtras = 730): MetricasShopeeDia[] {
   const appId = appIdShopeeAtual();
   const cutoff = new Date(Date.now() - diasAtras * 86400 * 1000).toISOString().slice(0, 10);
   const rows = db().prepare(`
-    SELECT data, cliques_total, cliques_redes_sociais, cliques_shopee_video, fonte, atualizado_em
+    SELECT data, cliques_total, cliques_redes_sociais, cliques_shopee_video, cliques_shopee_live, fonte, atualizado_em
     FROM metricas_shopee_diarias
     WHERE shopee_app_id = ? AND data >= ?
     ORDER BY data DESC
@@ -1225,6 +1271,7 @@ export function listarMetricasShopee(diasAtras = 730): MetricasShopeeDia[] {
     cliques_total: number;
     cliques_redes_sociais: number;
     cliques_shopee_video: number;
+    cliques_shopee_live: number;
     fonte: string;
     atualizado_em: string;
   }>;
@@ -1233,6 +1280,7 @@ export function listarMetricasShopee(diasAtras = 730): MetricasShopeeDia[] {
     cliquesTotal: row.cliques_total,
     cliquesRedesSociais: row.cliques_redes_sociais,
     cliquesShopeeVideo: row.cliques_shopee_video,
+    cliquesShopeeLive: row.cliques_shopee_live,
     fonte: row.fonte,
     atualizadoEm: row.atualizado_em
   }));
