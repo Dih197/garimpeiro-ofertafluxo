@@ -2835,6 +2835,34 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
   const diasVisiveis = (mostrarZerados ? dados : dados.filter(temMovimento)).slice().reverse();
   const formatarDia = (data: string, longo = false) => new Date(`${data}T12:00:00-03:00`).toLocaleDateString("pt-BR",
     longo ? { weekday: "short", day: "2-digit", month: "short" } : { day: "2-digit", month: "2-digit" });
+  const diagnostico = useMemo(() => {
+    const cancelamento = resumo.pedidosGerados > 0 ? (resumo.cancelados / resumo.pedidosGerados) * 100 : null;
+    const pendencia = resumo.comissao > 0 ? (resumo.pendente / resumo.comissao) * 100 : null;
+    const pontos: Array<{ tipo: "bom" | "atencao" | "proximo"; titulo: string; texto: string }> = [];
+
+    if (resumo.pedidos > 0 && resumo.lucro >= 0) {
+      pontos.push({ tipo: "bom", titulo: "Resultado positivo no período", texto: `A comissão estimada cobre a mídia em ${formatBRL(resumo.lucro)}. Mantenha os conteúdos que geraram pedidos antes de aumentar volume.` });
+    } else if (resumo.pedidos > 0) {
+      pontos.push({ tipo: "atencao", titulo: "Mídia acima da comissão estimada", texto: "Evite escalar agora. Compare criativos e destinos antes de pausar qualquer anúncio, pois parte da comissão ainda pode estar em maturação." });
+    } else {
+      pontos.push({ tipo: "atencao", titulo: "Ainda não há pedidos válidos", texto: "Priorize testar oferta, criativo e chamada para ação antes de tirar conclusões sobre rentabilidade." });
+    }
+
+    if (cancelamento !== null && cancelamento >= 10) {
+      pontos.push({ tipo: "atencao", titulo: `Cancelamento de ${cancelamento.toFixed(1)}%`, texto: "Revise preço, prazo, estoque e a promessa do conteúdo. Pedidos cancelados ficam fora da comissão e do GMV válido." });
+    } else if (pendencia !== null && pendencia >= 60) {
+      pontos.push({ tipo: "proximo", titulo: `${pendencia.toFixed(0)}% da comissão ainda está pendente`, texto: "A leitura financeira é preliminar. Acompanhe a maturação do cookie e a conclusão dos pedidos antes de considerar esse valor como realizado." });
+    }
+
+    if (resumo.conversaoVideo === null) {
+      pontos.push({ tipo: "proximo", titulo: "Conversão de vídeo ainda não mensurável", texto: "Use links rastreados nos próximos vídeos. Quando houver cliques e pedidos de vídeo no mesmo período, a taxa aparecerá automaticamente." });
+    } else if (resumo.conversaoVideo < 1) {
+      pontos.push({ tipo: "atencao", titulo: `Conversão de vídeo baixa (${resumo.conversaoVideo.toFixed(2)}%)`, texto: "Teste gancho nos primeiros 3 segundos, preço visível e CTA direto para o produto. Mude um elemento por vez para saber o que funcionou." });
+    } else {
+      pontos.push({ tipo: "bom", titulo: `Vídeo converteu ${resumo.conversaoVideo.toFixed(2)}%`, texto: "O funil de vídeo tem base comparável. Replique formato e categoria nos próximos conteúdos, preservando o mesmo rastreio." });
+    }
+    return pontos.slice(0, 3);
+  }, [resumo]);
 
   return (
     <section className="glass overflow-hidden rounded-2xl border-orange-500/15 bg-gradient-to-br from-orange-500/[0.025] via-transparent to-emerald-500/[0.02]">
@@ -2872,6 +2900,16 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
           <MetricaHistorico label="Conteúdo Shopee" valor={`${resumo.video} vídeo · ${resumo.live} live`} detalhe={resumo.comissaoCliqueVideo === null ? "Eficiência de vídeo N/D" : `Comissão/vídeo ${formatBRL(resumo.comissaoCliqueVideo)}`} icon={Video} cor="violet" />
         </div>
         <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-zinc-500"><span className="rounded-md border border-white/10 px-2 py-1">{formatNumber(resumo.novos)} novo(s) comprador(es)</span><span className="rounded-md border border-white/10 px-2 py-1">{formatNumber(resumo.pedidosGerados)} pedido(s) gerado(s)</span><span className="rounded-md border border-white/10 px-2 py-1">Resultado usa comissão estimada menos mídia; não representa lucro contábil.</span></div>
+
+        <div className="mt-5 rounded-xl border border-white/[0.07] bg-black/20 p-4">
+          <div className="mb-3 flex items-center gap-2"><Sparkles className="h-4 w-4 text-amber-300" /><div><div className="text-[10px] font-black uppercase tracking-wider text-zinc-300">Leitura inteligente do resultado</div><div className="text-[10px] text-zinc-600">Orientações baseadas apenas nas métricas comparáveis deste período.</div></div></div>
+          <div className="grid gap-2 lg:grid-cols-3">{diagnostico.map((ponto) => {
+            const estilo = ponto.tipo === "bom" ? "border-emerald-500/20 bg-emerald-500/[0.05] text-emerald-200" : ponto.tipo === "atencao" ? "border-amber-500/20 bg-amber-500/[0.05] text-amber-100" : "border-sky-500/20 bg-sky-500/[0.05] text-sky-100";
+            const Icone = ponto.tipo === "bom" ? CheckCircle2 : ponto.tipo === "atencao" ? AlertTriangle : Wrench;
+            const selo = ponto.tipo === "bom" ? "Está bom" : ponto.tipo === "atencao" ? "Atenção" : "Próximo passo";
+            return <div key={ponto.titulo} className={cn("rounded-lg border p-3", estilo)}><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider"><Icone className="h-3.5 w-3.5" />{selo}</div><div className="mt-2 text-xs font-bold text-zinc-100">{ponto.titulo}</div><p className="mt-1 text-[11px] leading-relaxed text-zinc-400">{ponto.texto}</p></div>;
+          })}</div>
+        </div>
       </div>
 
       <div className="p-5">
