@@ -2800,7 +2800,7 @@ function MetricaHistorico({
 function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
   const [mostrarZerados, setMostrarZerados] = useState(false);
   const resumo = useMemo(() => {
-    const pedidos = dados.reduce((s, d) => s + d.pedidosTotal, 0);
+    const pedidosGerados = dados.reduce((s, d) => s + d.pedidosTotal, 0);
     const itens = dados.reduce((s, d) => s + d.itensVendidos, 0);
     const faturamento = dados.reduce((s, d) => s + d.faturamentoTotal, 0);
     const comissao = dados.reduce((s, d) => s + d.comissaoTotal, 0);
@@ -2818,12 +2818,15 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
     const diasAtivos = dados.filter((d) => d.pedidosTotal > 0 || d.cliquesShopeeTotal > 0 || d.spendMeta > 0).length;
     const melhorDia = dados.reduce<PontoDiarioCompleto | null>((melhor, dia) =>
       !melhor || dia.comissaoTotal > melhor.comissaoTotal ? dia : melhor, null);
-    const ticketMedio = pedidos > 0 ? faturamento / pedidos : 0;
-    const conversao = temCliques && cliques > 0 ? (pedidos / cliques) * 100 : null;
-    const comissaoClique = temCliques && cliques > 0 ? comissao / cliques : null;
+    const pedidos = Math.max(0, pedidosGerados - cancelados);
+    const ticketMedio = pedidos > 0 ? faturamento / pedidos : null;
+    // Só o funil Shopee Vídeo possui clique e pedido com a mesma origem nesta série.
+    // Não misturamos cliques sociais com pedidos gerais para criar uma conversão falsa.
+    const conversaoVideo = cliquesVideo > 0 ? (video / cliquesVideo) * 100 : null;
+    const comissaoCliqueVideo = cliquesVideo > 0 ? dados.reduce((s, d) => s + d.comissaoVideo, 0) / cliquesVideo : null;
     return {
-      pedidos, itens, faturamento, comissao, confirmada, pendente, cliques, cliquesRedes, cliquesVideo,
-      temCliques, novos, cancelados, video, live, lucro, diasAtivos, melhorDia, ticketMedio, conversao, comissaoClique
+      pedidos, pedidosGerados, itens, faturamento, comissao, confirmada, pendente, cliques, cliquesRedes, cliquesVideo,
+      temCliques, novos, cancelados, video, live, lucro, diasAtivos, melhorDia, ticketMedio, conversaoVideo, comissaoCliqueVideo
     };
   }, [dados]);
 
@@ -2848,28 +2851,27 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
           <div className="flex flex-wrap items-center gap-2 text-[10px]">
             {resumo.melhorDia && resumo.melhorDia.comissaoTotal > 0 && (
               <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 font-bold text-emerald-300">
-                Melhor dia {formatarDia(resumo.melhorDia.data)} · {formatBRL(resumo.melhorDia.comissaoTotal)}
+                Maior comissão estimada: {formatarDia(resumo.melhorDia.data)} · {formatBRL(resumo.melhorDia.comissaoTotal)}
               </span>
             )}
             <span className={cn(
               "rounded-full border px-3 py-1 font-bold",
               resumo.lucro >= 0 ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" : "border-rose-500/20 bg-rose-500/10 text-rose-300"
             )}>
-              Resultado {resumo.lucro >= 0 ? "+" : ""}{formatBRL(resumo.lucro)}
+              Após mídia (estimado) {resumo.lucro >= 0 ? "+" : ""}{formatBRL(resumo.lucro)}
             </span>
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
-          <MetricaHistorico label="Pedidos" valor={formatNumber(resumo.pedidos)} detalhe={`${resumo.itens} item(ns) vendido(s)`} icon={ShoppingBag} cor="orange" />
-          <MetricaHistorico label="Faturamento" valor={formatBRL(resumo.faturamento)} detalhe={`Ticket ${formatBRL(resumo.ticketMedio)}`} icon={DollarSign} cor="violet" />
-          <MetricaHistorico label="Comissão" valor={formatBRL(resumo.comissao)} detalhe={`${formatBRL(resumo.confirmada)} confirmada · ${formatBRL(resumo.pendente)} pendente`} icon={Wallet} cor="emerald" />
-          <MetricaHistorico label="Cliques Shopee" valor={resumo.temCliques ? formatNumber(resumo.cliques) : "—"} detalhe={resumo.temCliques ? `${resumo.cliquesRedes} social · ${resumo.cliquesVideo} vídeo` : "Aguardando importação"} icon={MousePointerClick} cor="cyan" />
-          <MetricaHistorico label="Conversão" valor={resumo.conversao === null ? "—" : `${resumo.conversao.toFixed(2)}%`} detalhe="Pedidos ÷ cliques Shopee" icon={Target} cor="cyan" />
-          <MetricaHistorico label="Comissão/clique" valor={resumo.comissaoClique === null ? "—" : formatBRL(resumo.comissaoClique)} detalhe="Eficiência do tráfego" icon={TrendingUp} cor="emerald" />
-          <MetricaHistorico label="Vídeo + Live" valor={`${resumo.video} + ${resumo.live}`} detalhe="Pedidos por conteúdo Shopee" icon={Video} cor="violet" />
-          <MetricaHistorico label="Novos compradores" valor={formatNumber(resumo.novos)} detalhe={`${resumo.cancelados} pedido(s) cancelado(s)`} icon={Heart} cor={resumo.cancelados > 0 ? "rose" : "zinc"} />
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+          <MetricaHistorico label="Pedidos válidos" valor={formatNumber(resumo.pedidos)} detalhe={`${resumo.itens} item(ns) · ${resumo.cancelados} cancelado(s) excluído(s)`} icon={ShoppingBag} cor="orange" />
+          <MetricaHistorico label="GMV válido" valor={formatBRL(resumo.faturamento)} detalhe={resumo.ticketMedio === null ? "Sem pedidos válidos" : `Ticket médio ${formatBRL(resumo.ticketMedio)}`} icon={DollarSign} cor="violet" />
+          <MetricaHistorico label="Comissão estimada" valor={formatBRL(resumo.comissao)} detalhe={`${formatBRL(resumo.confirmada)} confirmada · ${formatBRL(resumo.pendente)} pendente`} icon={Wallet} cor="emerald" />
+          <MetricaHistorico label="Cliques rastreados" valor={resumo.temCliques ? formatNumber(resumo.cliques) : "N/D"} detalhe={resumo.temCliques ? `${resumo.cliquesRedes} redes sociais · ${resumo.cliquesVideo} Shopee Vídeo` : "Aguardando origem compatível"} icon={MousePointerClick} cor="cyan" />
+          <MetricaHistorico label="Conversão Shopee Vídeo" valor={resumo.conversaoVideo === null ? "N/D" : `${resumo.conversaoVideo.toFixed(2)}%`} detalhe={resumo.conversaoVideo === null ? "Sem cliques de vídeo" : "Pedidos de vídeo ÷ cliques de vídeo"} icon={Target} cor="cyan" />
+          <MetricaHistorico label="Conteúdo Shopee" valor={`${resumo.video} vídeo · ${resumo.live} live`} detalhe={resumo.comissaoCliqueVideo === null ? "Eficiência de vídeo N/D" : `Comissão/vídeo ${formatBRL(resumo.comissaoCliqueVideo)}`} icon={Video} cor="violet" />
         </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-zinc-500"><span className="rounded-md border border-white/10 px-2 py-1">{formatNumber(resumo.novos)} novo(s) comprador(es)</span><span className="rounded-md border border-white/10 px-2 py-1">{formatNumber(resumo.pedidosGerados)} pedido(s) gerado(s)</span><span className="rounded-md border border-white/10 px-2 py-1">Resultado usa comissão estimada menos mídia; não representa lucro contábil.</span></div>
       </div>
 
       <div className="p-5">
@@ -2900,14 +2902,14 @@ function PainelMetricasHistorico({ dados }: { dados: PontoDiarioCompleto[] }) {
                   <th className="px-3 py-3">Vídeo / Live</th>
                   <th className="px-3 py-3 text-right">Faturamento</th>
                   <th className="px-3 py-3 text-right">Comissão</th>
-                  <th className="px-3 py-3 text-right">Conversão</th>
-                  <th className="px-3 py-3 text-right">Resultado</th>
+                  <th className="px-3 py-3 text-right">Conv. vídeo</th>
+                  <th className="px-3 py-3 text-right">Após mídia (est.)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.05]">
                 {diasVisiveis.map((dia) => {
-                  const conversao = dia.temDadosCliquesShopee && dia.cliquesShopeeTotal > 0
-                    ? (dia.pedidosTotal / dia.cliquesShopeeTotal) * 100
+                  const conversao = dia.cliquesShopeeVideo > 0
+                    ? (dia.vendasVideo / dia.cliquesShopeeVideo) * 100
                     : null;
                   return (
                     <tr key={dia.data} className="bg-black/10 transition hover:bg-white/[0.025]">
